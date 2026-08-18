@@ -23,6 +23,11 @@ wrong rather than the wiring:
 - **Starter passes / solution fails.** The exercise is not doing its job. The
   starter must be a plausible attempt that fails for the reason the module
   teaches, and the solution must genuinely pass.
+- **An argument binds to an undeclared param.** Only a param-playground has
+  controls. A step-sim has no `params`, so `{"param": "..."}` cannot resolve
+  there however reasonable the name looks. Pass the value to `init` as a
+  `{"const": ...}` and carry it in the state. Re-sending the same binding with
+  a different label will fail in exactly the same way.
 
 Return the whole module, not a patch. Keep everything that was not at fault,
 including prose and captions that were fine.

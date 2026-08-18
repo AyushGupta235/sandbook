@@ -98,6 +98,18 @@ be genuinely wrong once computed.
 draws it. The state must carry `"done": true` on or before `max_steps`, or the
 lesson is rejected. `step` must not mutate the state it is given.
 
+**Only param-playground has controls.** A step-sim declares no `params`, so
+`{"param": "..."}` has nothing to bind to and is rejected. To run a specific
+scenario, pass it as a `{"const": ...}` to `init` and carry it in the state:
+
+```
+"init": {"fn": "retry_init", "args": {"scenario": {"const": "slow_activity"}}}
+```
+
+If the lesson genuinely needs the learner to switch between scenarios and watch
+each play out, that is a param-playground whose view draws the whole run, not a
+step-sim.
+
 **code-cell**, Python flavour
 ```
 {"type": "code-cell", "title": "...", "language": "python", "task": "...",
