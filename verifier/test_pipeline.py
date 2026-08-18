@@ -129,9 +129,57 @@ def case_nothing_survives() -> str:
     return "no module survived, nothing written, failure reported"
 
 
+def case_malformed_reply_is_retried() -> str:
+    """A reply in the wrong shape earns a second ask, not an immediate drop.
+
+    This is the failure that cost a real module: a code-cell whose widget names
+    no function came back with an empty functions list, and the build threw the
+    module away rather than asking again. The repair loop cannot cover this,
+    because it repairs a parsed module and there was nothing to parse.
+    """
+    good = {
+        "prose": "p",
+        "widget": {"type": "step-sim", "title": "t", "max_steps": 2,
+                   "init": {"fn": "r_init", "args": {}},
+                   "step": {"fn": "r_step", "args": {"state": {"state": True}}},
+                   "view": {"fn": "r_view", "args": {"state": {"state": True}}}},
+        "functions": [
+            {"name": "r_init", "source": 'def r_init():\n    return {"t": 0, "done": False}'},
+            {"name": "r_step", "source": 'def r_step(state):\n    s = dict(state)\n'
+                                         '    s["t"] += 1\n    s["done"] = s["t"] >= 2\n    return s'},
+            {"name": "r_view", "source": 'def r_view(state):\n    return {"kind": "scalars",\n'
+                                         '        "items": [{"label": "t", "value": state["t"]}]}'},
+        ],
+    }
+    empty_functions = dict(good, functions=[])
+    curriculum = {
+        "slug": "retried", "title": "Retried", "subtitle": "s", "packages": [],
+        "objectives": ["o"], "misconceptions": [{"claim": "c", "reality": "r"}],
+        "modules": [{"id": "only", "title": "Only", "widget_type": "step-sim",
+                     "intent": "i", "teaching_note": "n"}],
+    }
+    calls = [
+        {"stage": "curriculum", "system": "", "prompt": "", "reply": json.dumps(curriculum)},
+        {"stage": "module", "system": "", "prompt": "", "reply": json.dumps(empty_functions)},
+        {"stage": "module", "system": "", "prompt": "", "reply": json.dumps(good)},
+    ]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        fixture = pathlib.Path(tmp) / "retried.json"
+        fixture.write_text(json.dumps({"calls": calls}))
+        report, findings, _, _, _ = build_with(fixture, "a topic worth a second ask")
+
+    check(report.ok, f"the rebuilt module should have shipped: {report.dropped}")
+    check(report.shipped == ["only"], f"expected the module to ship, got {report.shipped}")
+    check(report.dropped == [], f"nothing should have been dropped, got {report.dropped}")
+    check(findings is not None and findings.errors == 0, "the shipped lesson does not verify")
+    return "a malformed first reply was rebuilt rather than dropped"
+
+
 CASES = [
     ("token-bucket: repair and fail-closed drop", case_token_bucket),
     ("nothing survives: writes nothing", case_nothing_survives),
+    ("malformed reply: rebuilt, not dropped", case_malformed_reply_is_retried),
 ]
 
 

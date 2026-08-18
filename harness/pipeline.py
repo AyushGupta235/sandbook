@@ -34,6 +34,7 @@ from llm import Model, ModelError, parse_json_reply  # noqa: E402
 
 PROMPTS = ROOT / "harness" / "prompts"
 MAX_REPAIR_ROUNDS = 3
+MODULE_BUILD_ATTEMPTS = 2   # a reply in the wrong shape earns one more ask
 
 WIDGET_TYPES = {"param-playground", "predict-reveal", "step-sim", "code-cell"}
 
@@ -352,11 +353,21 @@ def build(model: Model, topic: str, *, output_root: pathlib.Path,
 
     for spec in curriculum["modules"]:
         on_event("stage", f"building module {spec['id']} ({spec['widget_type']})")
-        try:
-            module = run_module(model, curriculum, spec, taken, grounding)
-        except ModelError as e:
-            on_event("drop", f"{spec['id']}: could not be built ({e})")
-            report.dropped.append((spec["id"], [("ERROR", spec["id"], str(e))]))
+        # A reply in the wrong shape is worth one more ask. It says nothing
+        # about whether the module is teachable, and the repair loop below
+        # cannot help: it needs a parsed module to repair.
+        module = None
+        for attempt in range(1, MODULE_BUILD_ATTEMPTS + 1):
+            try:
+                module = run_module(model, curriculum, spec, taken, grounding)
+                break
+            except ModelError as e:
+                if attempt < MODULE_BUILD_ATTEMPTS:
+                    on_event("repair", f"{spec['id']}: {e}, asking again")
+                    continue
+                on_event("drop", f"{spec['id']}: could not be built ({e})")
+                report.dropped.append((spec["id"], [("ERROR", spec["id"], str(e))]))
+        if module is None:
             continue
 
         module = _repair_until_clean(model, curriculum, module, taken, grounding,
