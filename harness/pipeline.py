@@ -104,6 +104,33 @@ CURRICULUM_SCHEMA = {
     "additionalProperties": False,
 }
 
+# Deliberately loose about the widget. Its shape varies by type and pinning it
+# here would duplicate the prompt and the verifier, both of which say it better.
+# The point of this schema is narrower: guarantee the reply is well-formed JSON
+# in the right top-level shape. A module was lost to an unescaped quote inside a
+# prose string, which is not a content problem and should not be able to happen.
+MODULE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "prose": {"type": "string"},
+        "widget": {"type": "object"},
+        "functions": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "source": {"type": "string"},
+                    "implements": {"type": ["string", "null"]},
+                },
+                "required": ["name", "source"],
+            },
+        },
+    },
+    "required": ["prose", "widget", "functions"],
+}
+
 
 # --------------------------------------------------------------- data shapes
 
@@ -269,6 +296,7 @@ def run_module(model: Model, curriculum: dict, spec: dict,
         stage="module",
         system="You build one module of an interactive lesson. You return JSON only.",
         prompt=_module_prompt("module.md", curriculum, spec, taken, grounding),
+        schema=MODULE_SCHEMA,
         model="claude-sonnet-5",
     )
     return _parse_module(reply.text, spec)
@@ -284,6 +312,7 @@ def run_repair(model: Model, curriculum: dict, module: BuiltModule,
         system="You repair a rejected lesson module. You return JSON only.",
         prompt=_module_prompt("repair.md", curriculum, module.spec, taken, grounding,
                               findings=_format_findings(findings), previous=previous),
+        schema=MODULE_SCHEMA,
         model="claude-opus-5",
     )
     repaired = _parse_module(reply.text, module.spec)
