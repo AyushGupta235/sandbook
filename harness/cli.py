@@ -190,9 +190,12 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
 
 def cmd_selftest(_args: argparse.Namespace) -> int:
-    """Prove both halves still work: the verifier catches planted defects, and
-    the pipeline repairs what it can and drops what it cannot."""
-    rc = subprocess.call([sys.executable, str(ROOT / "verifier" / "test_mutations.py")])
+    """Prove all three halves still work: the kernels behave as claimed, the
+    verifier catches planted defects, and the pipeline repairs what it can and
+    drops what it cannot. Kernels run first; if they are wrong, everything
+    measured against them is wrong too."""
+    rc = subprocess.call([sys.executable, str(ROOT / "kernels" / "test_kernels.py")])
+    rc |= subprocess.call([sys.executable, str(ROOT / "verifier" / "test_mutations.py")])
     rc |= subprocess.call([sys.executable, str(ROOT / "verifier" / "test_pipeline.py")])
     return rc
 
