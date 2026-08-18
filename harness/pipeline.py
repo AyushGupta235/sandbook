@@ -651,7 +651,13 @@ def _repair_until_clean(model: Model, curriculum: dict, module: BuiltModule,
         except ModelError as e:
             findings = [("ERROR", module.id, f"repair failed: {e}")]
             break
-        findings = verify_candidate(curriculum, accepted, module)
+        previous, findings = findings, verify_candidate(curriculum, accepted, module)
+        if findings and [m for _, _, m in findings] == [m for _, _, m in previous]:
+            # The same defect, word for word, after being told about it. More
+            # rounds of the same conversation cost money and change nothing;
+            # this is a brief the model cannot act on, not a slip it can fix.
+            on_event("repair", f"{module.id}: unchanged after round {rounds}, giving up early")
+            break
 
     if findings:
         on_event("drop", f"{module.id}: still failing after {rounds} repair round(s)")
