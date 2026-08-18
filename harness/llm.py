@@ -20,11 +20,23 @@ import asyncio
 import json
 import pathlib
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 
 MAX_TURNS = 8
+MAX_ATTEMPTS = 5          # per call, for transient failures only
+BACKOFF_BASE_S = 4.0
+
+# A busy API is not a broken lesson. Dropping a module because the server was
+# overloaded for a few seconds would fail closed on the wrong thing, so these
+# are retried rather than reported as defects.
+TRANSIENT_MARKERS = (
+    "529", "overloaded", "rate limit", "rate_limit", "too many requests",
+    "503", "502", "504", "timeout", "timed out", "connection reset",
+    "temporarily", "try again",
+)
 
 
 class ModelError(RuntimeError):
@@ -33,6 +45,15 @@ class ModelError(RuntimeError):
 
 class ModelAuthError(ModelError):
     """The CLI could not authenticate. Only the user can resolve this."""
+
+
+class TransientModelError(ModelError):
+    """A server-side hiccup. Worth retrying; not the lesson's fault."""
+
+
+def looks_transient(message: str) -> bool:
+    low = message.lower()
+    return any(marker in low for marker in TRANSIENT_MARKERS)
 
 
 @dataclass
@@ -105,14 +126,38 @@ class AgentSDKModel:
 
     DEFAULT_MODEL = "claude-opus-5"
 
-    def __init__(self, *, default_model: str | None = None, record: list[Call] | None = None):
+    def __init__(self, *, default_model: str | None = None, record: list[Call] | None = None,
+                 on_retry=None):
         self.default_model = default_model or self.DEFAULT_MODEL
         self.record = record  # when set, every call is appended for later replay
         self.total_cost_usd = 0.0
+        self.retries = 0
+        self._on_retry = on_retry or (lambda *_: None)
+
+    def on_retry(self, stage: str, attempt: int, delay: float, reason: str) -> None:
+        self.retries += 1
+        self._on_retry(stage, attempt, delay, reason)
 
     def complete(self, *, stage: str, system: str, prompt: str,
                  schema: dict | None = None, model: str | None = None) -> Reply:
-        reply = asyncio.run(self._complete_async(system, prompt, schema, model or self.default_model))
+        chosen = model or self.default_model
+        last: Exception | None = None
+
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            try:
+                reply = asyncio.run(self._complete_async(system, prompt, schema, chosen))
+                break
+            except TransientModelError as e:
+                last = e
+                if attempt == MAX_ATTEMPTS:
+                    raise ModelError(
+                        f"gave up after {MAX_ATTEMPTS} attempts against a busy API: {e}") from e
+                delay = BACKOFF_BASE_S * (2 ** (attempt - 1))
+                self.on_retry(stage, attempt, delay, str(e))
+                time.sleep(delay)
+        else:  # pragma: no cover - the loop always breaks or raises
+            raise ModelError(str(last))
+
         self.total_cost_usd += reply.cost_usd
         if self.record is not None:
             self.record.append(Call(stage=stage, system=system, prompt=prompt, reply=reply.text))
@@ -162,7 +207,17 @@ class AgentSDKModel:
         except Exception as e:
             if auth_failed or "authenticat" in str(e).lower():
                 raise ModelAuthError(AUTH_HELP) from e
-            raise ModelError(f"the model call failed: {type(e).__name__}: {e}") from e
+            detail = f"{type(e).__name__}: {e}"
+            partial = "".join(chunks)
+            # The CLI reports an overloaded upstream as ordinary assistant text
+            # and then raises a generic error, so the marker is in the partial.
+            if looks_transient(detail) or looks_transient(partial):
+                raise TransientModelError(
+                    (partial.strip().splitlines() or [detail])[0][:200]) from e
+            raise ModelError(
+                f"the model call failed: {detail}"
+                + (f" (partial text: {partial[:200]!r})" if partial else "")
+            ) from e
 
         if auth_failed:
             raise ModelAuthError(AUTH_HELP)
@@ -171,7 +226,9 @@ class AgentSDKModel:
         # than as assistant text, so fall back to it before giving up.
         text = "".join(chunks).strip() or payload.strip()
         if not text:
-            raise ModelError("the model returned no text")
+            raise TransientModelError("the model returned no text")
+        if looks_transient(text) and len(text) < 400:
+            raise TransientModelError(text.splitlines()[0][:200])
         return Reply(
             text=text,
             model=model,

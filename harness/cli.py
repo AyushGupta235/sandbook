@@ -54,15 +54,19 @@ def cmd_build(args: argparse.Namespace) -> int:
     from llm import AgentSDKModel, ModelAuthError, ModelError, ScriptedModel, save_recording
     import pipeline
 
+    icons = {"stage": "·", "curriculum": "▸", "ok": "✓", "repair": "↻",
+             "drop": "✗", "fail": "✗", "detail": "   ", "wait": "⋯"}
+
+    def on_retry(stage: str, attempt: int, delay: float, reason: str) -> None:
+        print(f"  {icons['wait']} {stage}: {reason[:80]}, retrying in {delay:.0f}s "
+              f"(attempt {attempt})", flush=True)
+
     recording: list = []
     if args.replay:
         model = ScriptedModel.from_file(args.replay)
         print(f"replaying {args.replay} (no model calls)")
     else:
-        model = AgentSDKModel(record=recording)
-
-    icons = {"stage": "·", "curriculum": "▸", "ok": "✓", "repair": "↻",
-             "drop": "✗", "fail": "✗", "detail": "   "}
+        model = AgentSDKModel(record=recording, on_retry=on_retry)
 
     def on_event(kind: str, message: str) -> None:
         print(f"  {icons.get(kind, '·')} {message}", flush=True)
@@ -104,6 +108,8 @@ def cmd_build(args: argparse.Namespace) -> int:
             print(f"    {mid}: {findings[0][2][:120]}")
     if report.cost_usd:
         print(f"  cost: ${report.cost_usd:.2f}")
+    if getattr(model, "retries", 0):
+        print(f"  {model.retries} transient API failure(s) retried rather than dropped")
     _write_index(OUTPUT)
     print(f"\nread it:    ./sandbook serve   then open"
           f" ?lesson={report.slug}&from=output")
