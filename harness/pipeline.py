@@ -30,7 +30,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "verifier"))
 
 from verify import verify_lesson  # noqa: E402
-from llm import Model, ModelError, parse_json_reply  # noqa: E402
+from llm import Model, ModelAuthError, ModelError, parse_json_reply  # noqa: E402
 
 PROMPTS = ROOT / "harness" / "prompts"
 MAX_REPAIR_ROUNDS = 3
@@ -361,6 +361,8 @@ def build(model: Model, topic: str, *, output_root: pathlib.Path,
             try:
                 module = run_module(model, curriculum, spec, taken, grounding)
                 break
+            except ModelAuthError:
+                raise            # not this module's fault, and every later one will fail too
             except ModelError as e:
                 if attempt < MODULE_BUILD_ATTEMPTS:
                     on_event("repair", f"{spec['id']}: {e}, asking again")
@@ -445,6 +447,8 @@ def _repair_until_clean(model: Model, curriculum: dict, module: BuiltModule,
                            f"{findings[0][2][:90]}")
         try:
             module = run_repair(model, curriculum, module, findings, taken, grounding)
+        except ModelAuthError:
+            raise                 # a lost credential is not a defect in the module
         except ModelError as e:
             findings = [("ERROR", module.id, f"repair failed: {e}")]
             break
