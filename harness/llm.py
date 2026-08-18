@@ -144,6 +144,7 @@ class AgentSDKModel:
             options.output_format = {"type": "json_schema", "schema": schema}
 
         chunks: list[str] = []
+        payload = ""          # structured output arrives here, not as text blocks
         auth_failed = False
         result = None
         try:
@@ -156,6 +157,8 @@ class AgentSDKModel:
                             chunks.append(block.text)
                 elif isinstance(message, ResultMessage):
                     result = message
+                    if isinstance(getattr(message, "result", None), str):
+                        payload = message.result
         except Exception as e:
             if auth_failed or "authenticat" in str(e).lower():
                 raise ModelAuthError(AUTH_HELP) from e
@@ -164,7 +167,9 @@ class AgentSDKModel:
         if auth_failed:
             raise ModelAuthError(AUTH_HELP)
 
-        text = "".join(chunks).strip()
+        # When output_format is set the reply is delivered on the result rather
+        # than as assistant text, so fall back to it before giving up.
+        text = "".join(chunks).strip() or payload.strip()
         if not text:
             raise ModelError("the model returned no text")
         return Reply(
