@@ -24,6 +24,9 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 
+MAX_TURNS = 8
+
+
 class ModelError(RuntimeError):
     """The model could not produce a usable reply."""
 
@@ -132,7 +135,10 @@ class AgentSDKModel:
             system_prompt=system,
             tools=[],                 # generation only; the model never acts
             setting_sources=None,     # ignore user/project settings for reproducibility
-            max_turns=1,
+            # A bound, not a target. With no tools there is nothing to loop on,
+            # but the CLI counts a turn for its own bookkeeping and a limit of 1
+            # aborts a perfectly ordinary single reply.
+            max_turns=MAX_TURNS,
         )
         if schema is not None:
             options.output_format = {"type": "json_schema", "schema": schema}
