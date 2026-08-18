@@ -128,6 +128,20 @@ write them as corrective guidance. Handle malformed input without raising.
 
 Declare exactly one flavour. Setting both `tests` and `grade` is rejected.
 
+## Writing
+
+This applies to every word a learner can see: prose, captions, option text,
+explanations, hints, assertion messages, and grader notes.
+
+**Never use an em-dash (`—`) or an en-dash (`–`) as punctuation.** Use a comma,
+a colon, a semicolon, brackets, or two sentences. A hyphen inside a compound
+word is fine.
+
+Write the way a good engineer explains something to a colleague. Say the thing
+directly. No throat-clearing openers, no "it's worth noting that", no summary
+paragraph restating what you just said, no marketing adjectives, and no
+enthusiasm the material has not earned.
+
 ## Accuracy
 
 Compute anything you assert. If a caption or an explanation states a number,

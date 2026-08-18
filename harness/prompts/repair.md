@@ -27,6 +27,17 @@ wrong rather than the wiring:
 Return the whole module, not a patch. Keep everything that was not at fault,
 including prose and captions that were fine.
 
+## Writing
+
+Any text you rewrite follows the lesson's style rules. **Never use an em-dash
+(`—`) or an en-dash (`–`) as punctuation**, in prose, captions, option text,
+explanations, hints, assertion messages, or grader notes. Use a comma, a colon,
+a semicolon, brackets, or two sentences. Say things directly, with no
+throat-clearing and no summary paragraph restating the point.
+
+If the module you were given contains one of those dashes, remove it while you
+are in there, whether or not it was reported as a finding.
+
 ## Findings
 
 {findings}

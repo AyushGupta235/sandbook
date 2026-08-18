@@ -17,6 +17,10 @@ and Y conflict, then watch it play out" is a strong one.
 Assume the reader is a competent engineer meeting this specific topic properly
 for the first time. Do not explain what a function or a network is.
 
+**Never use an em-dash (`—`) or an en-dash (`–`) as punctuation** in any text
+you write, including the title, the subtitle, and every teaching note. Use a
+comma, a colon, a semicolon, brackets, or two sentences.
+
 ## Widget types
 
 Each module gets exactly one widget. Choose the one that fits what the learner
