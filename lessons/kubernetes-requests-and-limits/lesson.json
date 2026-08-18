@@ -4,8 +4,11 @@
   "title": "Requests, Limits & Why Your Pod Is Pending",
   "subtitle": "The two numbers that decide where a Kubernetes pod lands, how hard it gets throttled, and when it gets killed.",
   "model": "model.py",
-  "packages": ["pyyaml"],
+  "packages": [
+    "pyyaml"
+  ],
   "targets": "Kubernetes 1.29+, default kube-scheduler",
+  "generated_on": "2026-08-18",
   "objectives": [
     "Say which of requests and limits the scheduler reads, and which the kubelet enforces",
     "Derive a pod's QoS class from its requests and limits, and say what that class buys you",
@@ -36,18 +39,66 @@
         "type": "param-playground",
         "title": "QoS class calculator",
         "params": [
-          { "id": "req_cpu_m", "label": "CPU request (m)", "kind": "range", "min": 0, "max": 2000, "step": 50, "default": 200, "format": "d", "unit": "m" },
-          { "id": "lim_cpu_m", "label": "CPU limit (m)", "kind": "range", "min": 0, "max": 4000, "step": 50, "default": 1000, "format": "d", "unit": "m" },
-          { "id": "req_mem_mi", "label": "Memory request (Mi)", "kind": "range", "min": 0, "max": 4096, "step": 64, "default": 256, "format": "d", "unit": "Mi" },
-          { "id": "lim_mem_mi", "label": "Memory limit (Mi)", "kind": "range", "min": 0, "max": 8192, "step": 64, "default": 512, "format": "d", "unit": "Mi" }
+          {
+            "id": "req_cpu_m",
+            "label": "CPU request (m)",
+            "kind": "range",
+            "min": 0,
+            "max": 2000,
+            "step": 50,
+            "default": 200,
+            "format": "d",
+            "unit": "m"
+          },
+          {
+            "id": "lim_cpu_m",
+            "label": "CPU limit (m)",
+            "kind": "range",
+            "min": 0,
+            "max": 4000,
+            "step": 50,
+            "default": 1000,
+            "format": "d",
+            "unit": "m"
+          },
+          {
+            "id": "req_mem_mi",
+            "label": "Memory request (Mi)",
+            "kind": "range",
+            "min": 0,
+            "max": 4096,
+            "step": 64,
+            "default": 256,
+            "format": "d",
+            "unit": "Mi"
+          },
+          {
+            "id": "lim_mem_mi",
+            "label": "Memory limit (Mi)",
+            "kind": "range",
+            "min": 0,
+            "max": 8192,
+            "step": 64,
+            "default": 512,
+            "format": "d",
+            "unit": "Mi"
+          }
         ],
         "view": {
           "fn": "qos_view",
           "args": {
-            "req_cpu_m": { "param": "req_cpu_m" },
-            "lim_cpu_m": { "param": "lim_cpu_m" },
-            "req_mem_mi": { "param": "req_mem_mi" },
-            "lim_mem_mi": { "param": "lim_mem_mi" }
+            "req_cpu_m": {
+              "param": "req_cpu_m"
+            },
+            "lim_cpu_m": {
+              "param": "lim_cpu_m"
+            },
+            "req_mem_mi": {
+              "param": "req_mem_mi"
+            },
+            "lim_mem_mi": {
+              "param": "lim_mem_mi"
+            }
           }
         }
       }
@@ -85,23 +136,47 @@
         "check": {
           "fn": "enforcement_outcome",
           "args": {
-            "req_cpu_m": { "const": 200 },
-            "lim_cpu_m": { "const": 1000 },
-            "req_mem_mi": { "const": 256 },
-            "lim_mem_mi": { "const": 256 },
-            "use_cpu_m": { "const": 1500 },
-            "use_mem_mi": { "const": 300 }
+            "req_cpu_m": {
+              "const": 200
+            },
+            "lim_cpu_m": {
+              "const": 1000
+            },
+            "req_mem_mi": {
+              "const": 256
+            },
+            "lim_mem_mi": {
+              "const": 256
+            },
+            "use_cpu_m": {
+              "const": 1500
+            },
+            "use_mem_mi": {
+              "const": 300
+            }
           }
         },
         "view": {
           "fn": "enforcement_view",
           "args": {
-            "req_cpu_m": { "const": 200 },
-            "lim_cpu_m": { "const": 1000 },
-            "req_mem_mi": { "const": 256 },
-            "lim_mem_mi": { "const": 256 },
-            "use_cpu_m": { "const": 1500 },
-            "use_mem_mi": { "const": 300 }
+            "req_cpu_m": {
+              "const": 200
+            },
+            "lim_cpu_m": {
+              "const": 1000
+            },
+            "req_mem_mi": {
+              "const": 256
+            },
+            "lim_mem_mi": {
+              "const": 256
+            },
+            "use_cpu_m": {
+              "const": 1500
+            },
+            "use_mem_mi": {
+              "const": 300
+            }
           }
         },
         "explanation": "CPU is a compressible resource: the kernel simply hands out fewer time slices, so the process runs slower and nothing dies. Memory is incompressible. There is no way to give a process less memory but slower, so crossing the limit invokes the OOM killer and the container is terminated and restarted. This is why an under-provisioned CPU limit shows up as mysterious latency, while an under-provisioned memory limit shows up as CrashLoopBackOff and a climbing restart count. They are diagnosed completely differently."
@@ -115,12 +190,39 @@
         "type": "param-playground",
         "title": "Where does this pod land?",
         "params": [
-          { "id": "pod_cpu_m", "label": "Pod CPU request (m)", "kind": "range", "min": 100, "max": 4000, "step": 100, "default": 800, "format": "d", "unit": "m" },
-          { "id": "pod_mem_mi", "label": "Pod memory request (Mi)", "kind": "range", "min": 128, "max": 8192, "step": 128, "default": 1024, "format": "d", "unit": "Mi" }
+          {
+            "id": "pod_cpu_m",
+            "label": "Pod CPU request (m)",
+            "kind": "range",
+            "min": 100,
+            "max": 4000,
+            "step": 100,
+            "default": 800,
+            "format": "d",
+            "unit": "m"
+          },
+          {
+            "id": "pod_mem_mi",
+            "label": "Pod memory request (Mi)",
+            "kind": "range",
+            "min": 128,
+            "max": 8192,
+            "step": 128,
+            "default": 1024,
+            "format": "d",
+            "unit": "Mi"
+          }
         ],
         "view": {
           "fn": "fit_view",
-          "args": { "pod_cpu_m": { "param": "pod_cpu_m" }, "pod_mem_mi": { "param": "pod_mem_mi" } }
+          "args": {
+            "pod_cpu_m": {
+              "param": "pod_cpu_m"
+            },
+            "pod_mem_mi": {
+              "param": "pod_mem_mi"
+            }
+          }
         }
       }
     },
@@ -133,9 +235,26 @@
         "title": "Scheduling five pods onto three nodes",
         "max_steps": 5,
         "autoplay_ms": 1100,
-        "init": { "fn": "schedule_init", "args": {} },
-        "step": { "fn": "schedule_step", "args": { "state": { "state": true } } },
-        "view": { "fn": "schedule_view", "args": { "state": { "state": true } } }
+        "init": {
+          "fn": "schedule_init",
+          "args": {}
+        },
+        "step": {
+          "fn": "schedule_step",
+          "args": {
+            "state": {
+              "state": true
+            }
+          }
+        },
+        "view": {
+          "fn": "schedule_view",
+          "args": {
+            "state": {
+              "state": true
+            }
+          }
+        }
       }
     },
     {
@@ -147,7 +266,9 @@
         "title": "pod.yaml",
         "language": "yaml",
         "task": "Edit the manifest so the pod's QoS class is Guaranteed and it fits the 2000m / 4096Mi budget.",
-        "grade": { "fn": "grade_manifest" },
+        "grade": {
+          "fn": "grade_manifest"
+        },
         "starter": "apiVersion: v1\nkind: Pod\nmetadata:\n  name: checkout-api\nspec:\n  containers:\n    - name: api\n      image: ghcr.io/example/checkout:1.4.2\n      resources:\n        requests:\n          cpu: 500m\n          memory: 512Mi\n",
         "solution": "apiVersion: v1\nkind: Pod\nmetadata:\n  name: checkout-api\nspec:\n  containers:\n    - name: api\n      image: ghcr.io/example/checkout:1.4.2\n      resources:\n        requests:\n          cpu: 500m\n          memory: 512Mi\n        limits:\n          cpu: 500m\n          memory: 512Mi\n",
         "hints": [

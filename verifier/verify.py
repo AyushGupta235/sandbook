@@ -18,6 +18,7 @@ Usage:  python3 verifier/verify.py [lesson-slug ...]
 
 from __future__ import annotations
 
+import datetime
 import json
 import math
 import pathlib
@@ -40,6 +41,12 @@ VIEW_KINDS = {"bars", "lines", "grid", "scalars", "text", "stack"}
 # a prompt is a request and a check is a guarantee, and asking alone did not
 # work: the first generated lesson came back with 38 of them.
 BANNED_CHARS = {"—": "em-dash", "–": "en-dash"}
+
+# How long a version-pinned lesson is assumed to still describe its tool. Infra
+# tooling moves fast enough that a year-old lesson on a Kubernetes API or a
+# Temporal SDK is a plausible source of confidently outdated instruction, which
+# is the same harm as being wrong, arriving more slowly.
+STALE_AFTER_DAYS = 365
 
 
 class Findings:
@@ -91,6 +98,32 @@ def check_prose(node, where: str, f: Findings, path: str = "") -> None:
     elif isinstance(node, list):
         for i, value in enumerate(node):
             check_prose(value, where, f, f"{path}[{i}]")
+
+
+def check_staleness(lesson: dict, where: str, f: Findings) -> None:
+    """A lesson pinned to a tool version has a shelf life.
+
+    Nothing here can tell whether the tool has actually changed. What it can do
+    is refuse to let a lesson quietly keep claiming accuracy for a version it
+    was written against a long time ago, which is how a lesson goes from correct
+    to confidently outdated without anyone editing it.
+    """
+    targets = lesson.get("targets")
+    if not targets:
+        return
+    written = lesson.get("generated_on")
+    if not written:
+        f.warn(where, f"claims accuracy for {targets!r} but records no date, "
+                      "so nothing can tell whether that is still true")
+        return
+    try:
+        age = (datetime.date.today() - datetime.date.fromisoformat(written)).days
+    except ValueError:
+        f.error(where, f"generated_on is {written!r}, which is not a date")
+        return
+    if age > STALE_AFTER_DAYS:
+        f.warn(where, f"targets {targets!r} and was written {age} days ago; "
+                      "check it against current docs before trusting it")
 
 
 # --------------------------------------------------------------- view checking
@@ -298,6 +331,7 @@ def verify_lesson(slug: str, lessons_dir: pathlib.Path | None = None) -> Finding
     source = model_path.read_text()
 
     check_prose({k: v for k, v in lesson.items() if k != "modules"}, slug, f)
+    check_staleness(lesson, slug, f)
 
     # ---- plan the execution ops -------------------------------------------
     ops: list[dict] = []

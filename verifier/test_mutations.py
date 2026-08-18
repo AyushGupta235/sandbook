@@ -210,6 +210,13 @@ def mut_en_dash_in_caption(lesson, model):
     )
 
 
+def mut_undateable_pin(lesson, model):
+    """A version claim with a date nobody can read is worse than no date."""
+    lesson["targets"] = "Kubernetes 1.29+"
+    lesson["generated_on"] = "last spring"
+    return lesson, model
+
+
 def mut_sim_grid_mismatch(lesson, model):
     """Scheduler grid with more columns than it has headers."""
     return lesson, model + (
@@ -247,6 +254,7 @@ SUITES = [
         ("both code-cell modes declared", mut_both_modes,             "pick one mode"),
         ("rejection with no failing check", mut_grader_silent_rejection, "no indication of what is wrong"),
         ("grid columns mismatch headers", mut_sim_grid_mismatch,      "column labels"),
+        ("version pin with an unreadable date", mut_undateable_pin,   "not a date"),
     ]),
 ]
 

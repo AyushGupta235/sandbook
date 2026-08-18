@@ -18,6 +18,7 @@ name.
 
 from __future__ import annotations
 
+import datetime
 import json
 import pathlib
 import re
@@ -190,7 +191,10 @@ def lesson_document(curriculum: dict, modules: list[BuiltModule]) -> dict:
     if claims:
         doc["implements"] = claims
     if curriculum.get("targets"):
+        # A lesson pinned to a tool version needs a date to be judged against
+        # later. Without one, "accurate for Temporal 1.25" has no shelf life.
         doc["targets"] = curriculum["targets"]
+        doc["generated_on"] = datetime.date.today().isoformat()
     if curriculum.get("sources"):
         doc["sources"] = curriculum["sources"]
     return doc
