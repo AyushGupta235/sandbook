@@ -1,0 +1,523 @@
+"""Verifies that a lesson is structurally sound, executable, and honestly scored.
+
+A generated lesson is treated as untrusted until checked, because a confident
+wrong explanation leaves a learner worse off than no lesson at all. This runs
+before a lesson ships, and a single ERROR blocks it.
+
+Layers:
+  1. structure   : shape of lesson.json, known widget types, sane param specs
+  2. references  : every function/param a widget names actually exists
+  3. execution   : every view renders, at every corner of its parameter space
+  4. contract    : the pedagogy rules that make answers checkable:
+                     * predict-reveal: exactly one option predicate holds
+                     * code-cell: the solution passes AND the starter fails
+                     * step-sim: terminates within max_steps
+
+Usage:  python3 verifier/verify.py [lesson-slug ...]
+"""
+
+from __future__ import annotations
+
+import json
+import math
+import pathlib
+import subprocess
+import sys
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+LESSONS = ROOT / "lessons"
+RUNNER = ROOT / "verifier" / "runner.py"
+TIMEOUT_S = 120
+
+WIDGET_TYPES = {"param-playground", "predict-reveal", "step-sim", "code-cell"}
+VIEW_KINDS = {"bars", "lines", "grid", "scalars", "text", "stack"}
+
+
+class Findings:
+    def __init__(self) -> None:
+        self.items: list[tuple[str, str, str]] = []
+
+    def error(self, where: str, msg: str) -> None:
+        self.items.append(("ERROR", where, msg))
+
+    def warn(self, where: str, msg: str) -> None:
+        self.items.append(("WARN", where, msg))
+
+    @property
+    def errors(self) -> int:
+        return sum(1 for s, _, _ in self.items if s == "ERROR")
+
+    @property
+    def warnings(self) -> int:
+        return sum(1 for s, _, _ in self.items if s == "WARN")
+
+
+# --------------------------------------------------------------- view checking
+
+
+def is_num(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def check_view(view, where: str, f: Findings) -> None:
+    """A view is the only thing generated code is allowed to draw with, so its
+    shape is checked strictly. A labels/values length mismatch silently
+    mislabels a chart, which is exactly the failure mode we cannot ship."""
+    if not isinstance(view, dict):
+        f.error(where, f"expected a view object, got {type(view).__name__}")
+        return
+    kind = view.get("kind")
+    if kind not in VIEW_KINDS:
+        f.error(where, f"unknown view kind {kind!r}; expected one of {sorted(VIEW_KINDS)}")
+        return
+
+    if kind == "bars":
+        values = view.get("values")
+        labels = view.get("labels")
+        if not isinstance(values, list) or not values:
+            f.error(where, "bars view needs a non-empty 'values' list")
+            return
+        bad = [i for i, v in enumerate(values) if not is_num(v)]
+        if bad:
+            f.error(where, f"bars 'values' has non-finite entries at indices {bad[:5]}")
+        if not isinstance(labels, list):
+            f.error(where, "bars view needs a 'labels' list")
+        elif len(labels) != len(values):
+            f.error(where, f"bars has {len(labels)} labels but {len(values)} values, "
+                           "the chart would mislabel its bars")
+        for i in view.get("highlight", []) or []:
+            if not isinstance(i, int) or not (0 <= i < len(values)):
+                f.error(where, f"bars 'highlight' index {i} is out of range")
+
+    elif kind == "lines":
+        xs = view.get("x")
+        series = view.get("series")
+        if not isinstance(xs, list) or not xs:
+            f.error(where, "lines view needs a non-empty 'x' list")
+            return
+        if not isinstance(series, list) or not series:
+            f.error(where, "lines view needs a non-empty 'series' list")
+            return
+        for si, s in enumerate(series):
+            vals = s.get("values") if isinstance(s, dict) else None
+            if not isinstance(vals, list):
+                f.error(where, f"series[{si}] needs a 'values' list")
+                continue
+            if len(vals) != len(xs):
+                f.error(where, f"series[{si}] has {len(vals)} points but x has {len(xs)}, "
+                               "the curve would be plotted against the wrong x values")
+            bad = [i for i, v in enumerate(vals) if not is_num(v)]
+            if bad:
+                f.error(where, f"series[{si}] has non-finite values at indices {bad[:5]}")
+            if not s.get("label"):
+                f.warn(where, f"series[{si}] has no label")
+
+    elif kind == "grid":
+        cells = view.get("cells")
+        if not isinstance(cells, list) or not cells:
+            f.error(where, "grid view needs a non-empty 'cells' list")
+            return
+        cols = view.get("col_labels")
+        rows = view.get("row_labels")
+        if isinstance(rows, list) and len(rows) != len(cells):
+            f.error(where, f"grid has {len(rows)} row labels but {len(cells)} rows")
+        for ri, row in enumerate(cells):
+            if not isinstance(row, list):
+                f.error(where, f"grid row {ri} is not a list")
+            elif isinstance(cols, list) and len(row) != len(cols):
+                f.error(where, f"grid row {ri} has {len(row)} cells but {len(cols)} column labels")
+
+    elif kind == "scalars":
+        items = view.get("items")
+        if not isinstance(items, list) or not items:
+            f.error(where, "scalars view needs a non-empty 'items' list")
+            return
+        for i, it in enumerate(items):
+            if not isinstance(it, dict) or "value" not in it:
+                f.error(where, f"scalars items[{i}] needs a 'value'")
+            elif not it.get("label"):
+                f.warn(where, f"scalars items[{i}] has no label")
+
+    elif kind == "text":
+        if not isinstance(view.get("text"), str) or not view["text"].strip():
+            f.error(where, "text view needs non-empty 'text'")
+
+    elif kind == "stack":
+        panels = view.get("panels")
+        if not isinstance(panels, list) or not panels:
+            f.error(where, "stack view needs a non-empty 'panels' list")
+            return
+        for i, p in enumerate(panels):
+            check_view(p, f"{where}.panels[{i}]", f)
+
+
+# ------------------------------------------------------- structure & planning
+
+
+def param_corners(params: list[dict]) -> list[dict]:
+    """Default settings, plus each parameter pushed to its extremes with the
+    rest left at default. Linear in the number of params rather than
+    exponential, but still exercises every boundary a learner can reach."""
+    base = {p["id"]: p.get("default") for p in params}
+    combos = [dict(base)]
+    for p in params:
+        alts = []
+        if p.get("kind") == "choice":
+            alts = [o["value"] for o in p.get("options", [])]
+        else:
+            alts = [p.get("min"), p.get("max")]
+        for a in alts:
+            if a is None:
+                continue
+            combo = dict(base)
+            combo[p["id"]] = a
+            if combo not in combos:
+                combos.append(combo)
+    return combos
+
+
+def resolve_args(spec: dict, scope: dict, where: str, declared: set, f: Findings):
+    """Mirror of runtime/bind.js. Returns resolved args, flagging bad bindings."""
+    out = {}
+    for key, binding in (spec or {}).items():
+        if isinstance(binding, dict) and "const" in binding:
+            out[key] = binding["const"]
+        elif isinstance(binding, dict) and "param" in binding:
+            name = binding["param"]
+            if name not in declared:
+                f.error(where, f"argument {key!r} binds to undeclared param {name!r}")
+                out[key] = None
+            else:
+                out[key] = scope.get(name)
+        elif isinstance(binding, dict) and "state" in binding:
+            out[key] = {"$state": True}
+        else:
+            out[key] = binding
+    return out
+
+
+def check_params(params, where, f: Findings) -> set:
+    declared = set()
+    for i, p in enumerate(params):
+        pid = p.get("id")
+        if not pid:
+            f.error(where, f"params[{i}] has no id")
+            continue
+        if pid in declared:
+            f.error(where, f"duplicate param id {pid!r}")
+        declared.add(pid)
+        if p.get("kind") == "choice":
+            opts = p.get("options") or []
+            if not opts:
+                f.error(where, f"choice param {pid!r} has no options")
+            values = [o.get("value") for o in opts]
+            if p.get("default") not in values:
+                f.error(where, f"choice param {pid!r} default {p.get('default')!r} is not among its options")
+        else:
+            lo, hi, d = p.get("min"), p.get("max"), p.get("default")
+            if not all(is_num(x) for x in (lo, hi, d)):
+                f.error(where, f"range param {pid!r} needs numeric min/max/default")
+                continue
+            if lo >= hi:
+                f.error(where, f"range param {pid!r} has min >= max")
+            if not (lo <= d <= hi):
+                f.error(where, f"range param {pid!r} default {d} is outside [{lo}, {hi}]")
+            if p.get("step") is not None and (not is_num(p["step"]) or p["step"] <= 0):
+                f.error(where, f"range param {pid!r} has a non-positive step")
+    return declared
+
+
+# ------------------------------------------------------------------ main pass
+
+
+def verify_lesson(slug: str, lessons_dir: pathlib.Path | None = None) -> Findings:
+    f = Findings()
+    d = (lessons_dir or LESSONS) / slug
+    lesson_path = d / "lesson.json"
+    if not lesson_path.exists():
+        f.error(slug, f"missing {lesson_path}")
+        return f
+
+    try:
+        lesson = json.loads(lesson_path.read_text())
+    except json.JSONDecodeError as e:
+        f.error(slug, f"lesson.json is not valid JSON: {e}")
+        return f
+
+    for field in ("slug", "title", "modules"):
+        if not lesson.get(field):
+            f.error(slug, f"lesson.json is missing required field {field!r}")
+    if lesson.get("slug") and lesson["slug"] != slug:
+        f.error(slug, f"lesson.json slug {lesson['slug']!r} does not match its directory name")
+
+    model_path = d / lesson.get("model", "model.py")
+    if not model_path.exists():
+        f.error(slug, f"model file {model_path.name} not found")
+        return f
+    source = model_path.read_text()
+
+    # ---- plan the execution ops -------------------------------------------
+    ops: list[dict] = []
+    plan: list[dict] = []  # parallel metadata describing what each op proves
+
+    for mi, module in enumerate(lesson.get("modules", [])):
+        mid = module.get("id") or f"modules[{mi}]"
+        widget = module.get("widget")
+        if not module.get("title"):
+            f.warn(mid, "module has no title")
+        if not widget:
+            f.warn(mid, "module has no widget, it is prose only")
+            continue
+        wtype = widget.get("type")
+        where = f"{mid}/{wtype}"
+        if wtype not in WIDGET_TYPES:
+            f.error(mid, f"unknown widget type {wtype!r}; the runtime cannot render it")
+            continue
+
+        if wtype == "param-playground":
+            params = widget.get("params") or []
+            declared = check_params(params, where, f)
+            view = widget.get("view") or {}
+            if not view.get("fn"):
+                f.error(where, "param-playground needs view.fn")
+                continue
+            for combo in param_corners(params):
+                ops.append({"op": "call", "fn": view["fn"],
+                            "args": resolve_args(view.get("args"), combo, where, declared, f)})
+                plan.append({"kind": "view", "where": f"{where} view@{combo}"})
+            for ri, r in enumerate(widget.get("readouts") or []):
+                if not r.get("fn"):
+                    f.error(where, f"readouts[{ri}] needs an fn")
+                    continue
+                base = {p["id"]: p.get("default") for p in params}
+                ops.append({"op": "call", "fn": r["fn"],
+                            "args": resolve_args(r.get("args"), base, where, declared, f)})
+                plan.append({"kind": "scalar", "where": f"{where} readouts[{ri}]"})
+
+        elif wtype == "predict-reveal":
+            options = widget.get("options") or []
+            check = widget.get("check") or {}
+            if len(options) < 2:
+                f.error(where, "predict-reveal needs at least two options")
+            if not check.get("fn"):
+                f.error(where, "predict-reveal needs check.fn; the answer must be derived, not asserted")
+                continue
+            missing = [o.get("id") for o in options if not o.get("predicate")]
+            if missing:
+                f.error(where, f"options {missing} have no predicate; their correctness cannot be derived")
+                continue
+            for key in ("correct", "answer", "correct_id"):
+                if key in widget:
+                    f.error(where, f"predict-reveal must not assert an answer via {key!r}; "
+                                   "correctness is derived by executing the predicates")
+            ops.append({"op": "check", "fn": check["fn"],
+                        "args": resolve_args(check.get("args"), {}, where, set(), f),
+                        "predicates": [o["predicate"] for o in options]})
+            plan.append({"kind": "predicates", "where": where,
+                         "options": [o.get("id") for o in options]})
+            if widget.get("view", {}).get("fn"):
+                v = widget["view"]
+                ops.append({"op": "call", "fn": v["fn"],
+                            "args": resolve_args(v.get("args"), {}, where, set(), f)})
+                plan.append({"kind": "view", "where": f"{where} reveal view"})
+
+        elif wtype == "step-sim":
+            init, step, view = widget.get("init"), widget.get("step"), widget.get("view")
+            if not (init and step and view and init.get("fn") and step.get("fn") and view.get("fn")):
+                f.error(where, "step-sim needs init.fn, step.fn and view.fn")
+                continue
+            max_steps = widget.get("max_steps", 32)
+            init_idx = len(ops)
+            ops.append({"op": "call", "fn": init["fn"],
+                        "args": resolve_args(init.get("args"), {}, where, set(), f)})
+            plan.append({"kind": "sim-init", "where": f"{where} init"})
+
+            state_ref = init_idx
+            for s in range(max_steps):
+                ops.append({"op": "call", "fn": view["fn"],
+                            "args": {k: ({"$ref": state_ref} if isinstance(v, dict) and "state" in v else v)
+                                     for k, v in (view.get("args") or {}).items()}})
+                plan.append({"kind": "view", "where": f"{where} view@step{s}"})
+                ops.append({"op": "call", "fn": step["fn"],
+                            "args": {k: ({"$ref": state_ref} if isinstance(v, dict) and "state" in v else v)
+                                     for k, v in (step.get("args") or {}).items()}})
+                plan.append({"kind": "sim-step", "where": f"{where} step{s + 1}", "index": s + 1,
+                             "max_steps": max_steps, "widget": where})
+                state_ref = len(ops) - 1
+
+        elif wtype == "code-cell":
+            graded = bool((widget.get("grade") or {}).get("fn"))
+            for field in ("task", "starter", "solution"):
+                if not widget.get(field):
+                    f.error(where, f"code-cell needs a non-empty {field!r}")
+            if not graded and not widget.get("tests"):
+                f.error(where, "code-cell needs either 'tests' (python mode) or 'grade.fn' (graded mode)")
+            if widget.get("tests") and graded:
+                f.error(where, "code-cell declares both 'tests' and 'grade.fn'; pick one mode")
+            if not (widget.get("solution") and widget.get("starter")):
+                continue
+            if f.errors:
+                continue
+
+            # Both modes must prove the same two things: the reference solution
+            # passes, and the starter does not.
+            if graded:
+                fn = widget["grade"]["fn"]
+                ops.append({"op": "call", "fn": fn, "args": {"submission": widget["solution"]}})
+                plan.append({"kind": "graded-solution", "where": where})
+                ops.append({"op": "call", "fn": fn, "args": {"submission": widget["starter"]}})
+                plan.append({"kind": "graded-starter", "where": where})
+            else:
+                ops.append({"op": "exec", "code": widget["solution"], "tests": widget["tests"]})
+                plan.append({"kind": "solution", "where": where})
+                ops.append({"op": "exec", "code": widget["starter"], "tests": widget["tests"]})
+                plan.append({"kind": "starter", "where": where})
+
+    if f.errors:
+        return f  # planning already failed; executing would only add noise
+
+    # ---- execute -----------------------------------------------------------
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(RUNNER)],
+            input=json.dumps({"source": source, "ops": ops,
+                              "packages": lesson.get("packages") or []}),
+            capture_output=True, text=True, timeout=TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        f.error(slug, f"model execution exceeded {TIMEOUT_S}s, likely an infinite loop in model.py")
+        return f
+
+    if proc.returncode != 0:
+        f.error(slug, f"runner crashed (exit {proc.returncode}): {proc.stderr.strip()[:600]}")
+        return f
+    try:
+        out = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        f.error(slug, f"runner produced unreadable output: {proc.stdout[:300]!r}")
+        return f
+    if not out.get("ok"):
+        f.error(slug, f"model.py failed to load: {out.get('error')}\n{out.get('trace', '')}")
+        return f
+
+    names = set(out.get("names", []))
+    for op in ops:
+        if op["op"] in ("call", "check") and op["fn"] not in names:
+            f.error(slug, f"widget references {op['fn']}() but model.py defines no such function")
+    if f.errors:
+        return f
+
+    # ---- interpret ---------------------------------------------------------
+    sim_done: dict[str, int] = {}
+
+    for meta, res in zip(plan, out.get("results", [])):
+        where = meta["where"]
+        kind = meta["kind"]
+
+        if kind in ("view", "scalar", "sim-init", "sim-step"):
+            if not res.get("ok"):
+                f.error(where, f"call failed: {res.get('error')}")
+                continue
+
+        if kind == "view":
+            check_view(res.get("result"), where, f)
+
+        elif kind == "scalar":
+            v = res.get("result")
+            if not (is_num(v) or isinstance(v, str)):
+                f.error(where, f"readout returned {type(v).__name__}; expected a number or string")
+
+        elif kind == "sim-init":
+            if not isinstance(res.get("result"), dict):
+                f.error(where, "step-sim init must return a state object (dict)")
+
+        elif kind == "sim-step":
+            state = res.get("result")
+            if isinstance(state, dict) and state.get("done") and meta["widget"] not in sim_done:
+                sim_done[meta["widget"]] = meta["index"]
+
+        elif kind == "predicates":
+            if not res.get("ok"):
+                f.error(where, f"answer derivation failed: {res.get('error')}")
+                continue
+            flags = res.get("flags") or []
+            true_ids = [oid for oid, flag in zip(meta["options"], flags) if flag]
+            if len(true_ids) == 0:
+                f.error(where, "no option predicate is true, so this question has no correct answer "
+                               "and cannot be scored")
+            elif len(true_ids) > 1:
+                f.error(where, f"{len(true_ids)} option predicates are true ({true_ids}), "
+                               "the question has multiple 'correct' answers")
+
+        elif kind == "solution":
+            if not res.get("ok"):
+                f.error(where, "the provided solution does not pass its own checks: "
+                               f"[{res.get('stage')}] {res.get('error')}")
+
+        elif kind == "starter":
+            if res.get("ok"):
+                f.error(where, "the starter code already passes every check, so the exercise asks the "
+                               "learner to fix something that is not broken")
+
+        elif kind in ("graded-solution", "graded-starter"):
+            if not res.get("ok"):
+                f.error(where, f"grader raised an error: {res.get('error')}")
+                continue
+            result = res.get("result")
+            if not isinstance(result, dict) or "passed" not in result:
+                f.error(where, "grader must return an object with a 'passed' boolean")
+                continue
+            if kind == "graded-solution" and not result["passed"]:
+                f.error(where, "the provided solution is rejected by its own grader: "
+                               f"{result.get('message', '(no message)')}")
+            if kind == "graded-starter" and result["passed"]:
+                f.error(where, "the starter submission already passes the grader, so the exercise asks "
+                               "the learner to fix something that is not broken")
+            if kind == "graded-starter" and not result["passed"]:
+                if not result.get("message"):
+                    f.warn(where, "grader gives no message on failure; the learner sees no feedback")
+                details = result.get("details")
+                # A rejected submission must say which check it failed. Otherwise
+                # the learner is told "not there yet" with nothing to act on.
+                if isinstance(details, list) and details and not any(
+                        isinstance(d, dict) and d.get("ok") is False for d in details):
+                    f.error(where, "grader rejects the starter but every individual check reports "
+                                   "ok, so the learner is given no indication of what is wrong")
+
+    for p in plan:
+        if p["kind"] == "sim-step" and p["index"] == p["max_steps"]:
+            if p["widget"] not in sim_done:
+                f.error(p["widget"], f"simulation never set done=true within max_steps="
+                                     f"{p['max_steps']}; the learner would hit the cap mid-algorithm")
+
+    return f
+
+
+# ---------------------------------------------------------------------- entry
+
+
+def main(argv: list[str]) -> int:
+    slugs = argv[1:] or sorted(p.name for p in LESSONS.iterdir() if (p / "lesson.json").exists())
+    if not slugs:
+        print("no lessons found")
+        return 1
+
+    total_err = 0
+    for slug in slugs:
+        f = verify_lesson(slug)
+        total_err += f.errors
+        status = "FAIL" if f.errors else ("ok" if not f.warnings else "ok (warnings)")
+        print(f"\n{'=' * 68}\n{slug}: {status}\n{'=' * 68}")
+        if not f.items:
+            print("  no findings")
+        for severity, where, msg in f.items:
+            marker = "✗" if severity == "ERROR" else "!"
+            print(f"  {marker} [{severity}] {where}\n      {msg}")
+        print(f"\n  {f.errors} error(s), {f.warnings} warning(s)")
+
+    print()
+    return 1 if total_err else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

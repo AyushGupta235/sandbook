@@ -1,0 +1,14 @@
+{
+  "lessons": [
+    {
+      "slug": "softmax-and-temperature",
+      "title": "Softmax & Temperature",
+      "subtitle": "What the temperature knob is really doing to a language model's next-token distribution."
+    },
+    {
+      "slug": "kubernetes-requests-and-limits",
+      "title": "Requests, Limits & Why Your Pod Is Pending",
+      "subtitle": "The two numbers that decide where a Kubernetes pod lands, how hard it gets throttled, and when it gets killed."
+    }
+  ]
+}

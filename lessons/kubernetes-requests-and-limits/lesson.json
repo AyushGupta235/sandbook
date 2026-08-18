@@ -1,0 +1,174 @@
+{
+  "schema_version": 1,
+  "slug": "kubernetes-requests-and-limits",
+  "title": "Requests, Limits & Why Your Pod Is Pending",
+  "subtitle": "The two numbers that decide where a Kubernetes pod lands, how hard it gets throttled, and when it gets killed.",
+  "model": "model.py",
+  "packages": ["pyyaml"],
+  "targets": "Kubernetes 1.29+, default kube-scheduler",
+  "objectives": [
+    "Say which of requests and limits the scheduler reads, and which the kubelet enforces",
+    "Derive a pod's QoS class from its requests and limits, and say what that class buys you",
+    "Explain why exceeding a CPU limit throttles but exceeding a memory limit kills",
+    "Explain why a pod can be Pending while the cluster shows plenty of free capacity",
+    "Write a manifest that is Guaranteed and fits a given budget"
+  ],
+  "misconceptions": [
+    {
+      "claim": "Limits are what the scheduler uses to place pods.",
+      "reality": "The scheduler only reads requests. Limits are enforced later, by the kubelet and the kernel, on whichever node the pod landed on."
+    },
+    {
+      "claim": "Exceeding a limit kills the container.",
+      "reality": "Exceeding a CPU limit throttles it; exceeding a memory limit kills it. CPU is compressible, memory is not."
+    },
+    {
+      "claim": "If the cluster has free capacity, my pod will schedule.",
+      "reality": "A pod must fit entirely on one node. Free capacity scattered across nodes is unusable."
+    }
+  ],
+  "modules": [
+    {
+      "id": "qos",
+      "title": "Two numbers, four consequences",
+      "prose": "Every container can declare two things per resource. A **request** is a reservation: the scheduler subtracts it from a node's capacity and guarantees you that much. A **limit** is a ceiling: the kubelet and the kernel stop you exceeding it.\n\nThe pair also determines the pod's **QoS class**, which is what Kubernetes consults when a node runs out of memory and something has to die. `Guaranteed` pods are evicted last, `BestEffort` first.\n\nThe rule for `Guaranteed` is stricter than most people remember: *every* container needs both limits set, with requests equal to them. One container missing a memory limit demotes the whole pod to `Burstable`. Set a slider to 0 to represent an unset field.",
+      "widget": {
+        "type": "param-playground",
+        "title": "QoS class calculator",
+        "params": [
+          { "id": "req_cpu_m", "label": "CPU request (m)", "kind": "range", "min": 0, "max": 2000, "step": 50, "default": 200, "format": "d", "unit": "m" },
+          { "id": "lim_cpu_m", "label": "CPU limit (m)", "kind": "range", "min": 0, "max": 4000, "step": 50, "default": 1000, "format": "d", "unit": "m" },
+          { "id": "req_mem_mi", "label": "Memory request (Mi)", "kind": "range", "min": 0, "max": 4096, "step": 64, "default": 256, "format": "d", "unit": "Mi" },
+          { "id": "lim_mem_mi", "label": "Memory limit (Mi)", "kind": "range", "min": 0, "max": 8192, "step": 64, "default": 512, "format": "d", "unit": "Mi" }
+        ],
+        "view": {
+          "fn": "qos_view",
+          "args": {
+            "req_cpu_m": { "param": "req_cpu_m" },
+            "lim_cpu_m": { "param": "lim_cpu_m" },
+            "req_mem_mi": { "param": "req_mem_mi" },
+            "lim_mem_mi": { "param": "lim_mem_mi" }
+          }
+        }
+      }
+    },
+    {
+      "id": "enforcement",
+      "title": "Predict: which limit kills you?",
+      "prose": "A container is configured with `requests.cpu: 200m`, `limits.cpu: 1000m`, `requests.memory: 256Mi`, `limits.memory: 256Mi`.\n\nTraffic spikes. The process tries to use **1500m of CPU** and **300Mi of memory**, over both limits at once.\n\nCommit to a prediction before you look.",
+      "widget": {
+        "type": "predict-reveal",
+        "title": "Over both limits simultaneously",
+        "question": "What does Kubernetes do to this container?",
+        "options": [
+          {
+            "id": "both-throttled",
+            "text": "Both resources are throttled back to their limits; the container keeps running.",
+            "predicate": "result['cpu_action'] == 'throttled' and result['mem_action'] == 'none'"
+          },
+          {
+            "id": "cpu-throttle-mem-kill",
+            "text": "CPU is throttled to 1000m, and the container is OOMKilled for the memory.",
+            "predicate": "result['cpu_action'] == 'throttled' and result['mem_action'] == 'oomkilled'"
+          },
+          {
+            "id": "evicted",
+            "text": "The pod is evicted from the node and rescheduled elsewhere.",
+            "predicate": "result['mem_action'] == 'evicted'"
+          },
+          {
+            "id": "nothing",
+            "text": "Nothing. Limits are advisory unless a ResourceQuota is set.",
+            "predicate": "result['cpu_action'] == 'none' and result['mem_action'] == 'none'"
+          }
+        ],
+        "check": {
+          "fn": "enforcement_outcome",
+          "args": {
+            "req_cpu_m": { "const": 200 },
+            "lim_cpu_m": { "const": 1000 },
+            "req_mem_mi": { "const": 256 },
+            "lim_mem_mi": { "const": 256 },
+            "use_cpu_m": { "const": 1500 },
+            "use_mem_mi": { "const": 300 }
+          }
+        },
+        "view": {
+          "fn": "enforcement_view",
+          "args": {
+            "req_cpu_m": { "const": 200 },
+            "lim_cpu_m": { "const": 1000 },
+            "req_mem_mi": { "const": 256 },
+            "lim_mem_mi": { "const": 256 },
+            "use_cpu_m": { "const": 1500 },
+            "use_mem_mi": { "const": 300 }
+          }
+        },
+        "explanation": "CPU is a compressible resource: the kernel simply hands out fewer time slices, so the process runs slower and nothing dies. Memory is incompressible. There is no way to give a process less memory but slower, so crossing the limit invokes the OOM killer and the container is terminated and restarted. This is why an under-provisioned CPU limit shows up as mysterious latency, while an under-provisioned memory limit shows up as CrashLoopBackOff and a climbing restart count. They are diagnosed completely differently."
+      }
+    },
+    {
+      "id": "fit",
+      "title": "The scheduler reads requests, and only requests",
+      "prose": "Here is a cluster of three nodes, each 4000m CPU and 8192Mi memory, already partly occupied. Size a new pod's **requests** and see where it lands.\n\nNote what is *not* an input: actual usage. A node running at 5% CPU whose pods have reserved all of it is full as far as the scheduler is concerned. Requests are an accounting fiction that the scheduler takes completely seriously, which is why over-requesting is the most common way to waste half a cluster.",
+      "widget": {
+        "type": "param-playground",
+        "title": "Where does this pod land?",
+        "params": [
+          { "id": "pod_cpu_m", "label": "Pod CPU request (m)", "kind": "range", "min": 100, "max": 4000, "step": 100, "default": 800, "format": "d", "unit": "m" },
+          { "id": "pod_mem_mi", "label": "Pod memory request (Mi)", "kind": "range", "min": 128, "max": 8192, "step": 128, "default": 1024, "format": "d", "unit": "Mi" }
+        ],
+        "view": {
+          "fn": "fit_view",
+          "args": { "pod_cpu_m": { "param": "pod_cpu_m" }, "pod_mem_mi": { "param": "pod_mem_mi" } }
+        }
+      }
+    },
+    {
+      "id": "fragmentation",
+      "title": "Pending, with 6 free cores",
+      "prose": "Now watch five pods arrive in order on an empty three-node cluster. Each is placed on the feasible node with the lowest utilisation.\n\nWatch the last one. It is the failure that generates the most confused incident channels: a pod stuck `Pending` while `kubectl top nodes` reports idle capacity.",
+      "widget": {
+        "type": "step-sim",
+        "title": "Scheduling five pods onto three nodes",
+        "max_steps": 5,
+        "autoplay_ms": 1100,
+        "init": { "fn": "schedule_init", "args": {} },
+        "step": { "fn": "schedule_step", "args": { "state": { "state": true } } },
+        "view": { "fn": "schedule_view", "args": { "state": { "state": true } } }
+      }
+    },
+    {
+      "id": "write-manifest",
+      "title": "Write a Guaranteed pod",
+      "prose": "Below is a manifest for a checkout API. It reserves capacity but stops there, so it is `Burstable`. It may be throttled unpredictably by noisy neighbours, and under node memory pressure it is evicted before any `Guaranteed` workload.\n\nMake it `Guaranteed`, staying within a budget of **2000m CPU** and **4096Mi memory**. The checker parses your YAML the same way the API server would.",
+      "widget": {
+        "type": "code-cell",
+        "title": "pod.yaml",
+        "language": "yaml",
+        "task": "Edit the manifest so the pod's QoS class is Guaranteed and it fits the 2000m / 4096Mi budget.",
+        "grade": { "fn": "grade_manifest" },
+        "starter": "apiVersion: v1\nkind: Pod\nmetadata:\n  name: checkout-api\nspec:\n  containers:\n    - name: api\n      image: ghcr.io/example/checkout:1.4.2\n      resources:\n        requests:\n          cpu: 500m\n          memory: 512Mi\n",
+        "solution": "apiVersion: v1\nkind: Pod\nmetadata:\n  name: checkout-api\nspec:\n  containers:\n    - name: api\n      image: ghcr.io/example/checkout:1.4.2\n      resources:\n        requests:\n          cpu: 500m\n          memory: 512Mi\n        limits:\n          cpu: 500m\n          memory: 512Mi\n",
+        "hints": [
+          "Guaranteed needs a limits block as well as a requests block. A container with no limit can never be Guaranteed, no matter how precise its request.",
+          "The two blocks must match exactly, field for field: cpu equal to cpu, memory equal to memory."
+        ]
+      }
+    }
+  ],
+  "sources": [
+    {
+      "title": "Kubernetes docs: Resource Management for Pods and Containers",
+      "url": "https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/"
+    },
+    {
+      "title": "Kubernetes docs: Pod Quality of Service Classes",
+      "url": "https://kubernetes.io/docs/concepts/workloads/pods/pod-qos/"
+    },
+    {
+      "title": "Kubernetes docs: Node-pressure Eviction",
+      "url": "https://kubernetes.io/docs/concepts/scheduling-eviction/node-pressure-eviction/"
+    }
+  ]
+}
