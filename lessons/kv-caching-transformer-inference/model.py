@@ -140,12 +140,12 @@ def recompute_kv_view(state):
     scalars = {
         "kind": "scalars",
         "items": [
-            {"label": "K/V row-projections so far \u2014 no cache", "value": state["no_cache_total"]},
-            {"label": "K/V row-projections so far \u2014 cached", "value": state["cached_total"]},
+            {"label": "K/V row-projections so far, no cache", "value": state["no_cache_total"]},
+            {"label": "K/V row-projections so far, cached", "value": state["cached_total"]},
             {"label": "current position being decoded", "value": t},
         ],
         "value_format": "d",
-        "caption": "After all three decode steps the no-cache lane will have done 4+5+6=15 K/V projections; the cached lane only ever does 3 \u2014 one per new token.",
+        "caption": "After all three decode steps the no-cache lane will have done 4+5+6=15 K/V projections; the cached lane only ever does 3, one per new token.",
     }
 
     if step == 0:
@@ -157,7 +157,7 @@ def recompute_kv_view(state):
         text = {
             "kind": "text",
             "text": (
-                "Attention output at position " + str(t) + " \u2014 no cache: " + str(state["output_nocache"]) +
+                "Attention output at position " + str(t) + ", no cache: " + str(state["output_nocache"]) +
                 ", cached: " + str(state["output_cached"]) +
                 ". The two lanes use exactly the same K and V values, so the numbers match to 3 decimals every step: caching changes how much work is repeated, not what the model computes."
             ),
@@ -168,8 +168,8 @@ def recompute_kv_view(state):
     if state.get("done"):
         caption = (
             "Across the three generated tokens, no-cache work grows as 4+5+6=15 row-projections "
-            "(O(n^2) over a generation of length n), while the cached lane does exactly 3 (O(n)) \u2014 "
-            "one new row per step \u2014 and both lanes land on identical attention outputs the whole way."
+            "(O(n^2) over a generation of length n), while the cached lane does exactly 3 (O(n)), "
+            "one new row per step, and both lanes land on identical attention outputs the whole way."
         )
     else:
         caption = "Step through all three decode positions to see the totals diverge while the outputs stay identical."
@@ -217,7 +217,7 @@ def kv_read_heatmap_view(prompt_len, gen_len, highlight_position):
     col_labels = [str(p) for p in positions]
     highlight_idx = positions.index(highlight_position)
     caption = (
-        "Every position's query vector (top row) is read exactly once \u2014 the step that "
+        "Every position's query vector (top row) is read exactly once: the step that "
         "creates it is the only step that ever needs it. Every position's key vector (bottom "
         "row) is read " + str(1 + gen_len) + " times: once during the batched prefill pass and "
         "once more on each of the " + str(gen_len) + " decode steps, because causal masking "
@@ -413,7 +413,7 @@ def bandwidth_batch_scaling_view():
             f"throughput from {round(thr0)} to {round(thrN)} tok/s, because the same 14 GB weight "
             f"read is now amortised over many sequences at once. But per-step latency also climbs "
             f"from {lat0:.1f} ms to {latN:.1f} ms, because KV cache bytes read per step scale "
-            f"linearly with batch \u2014 eventually cache bytes rival weight bytes and the "
+            f"linearly with batch, and eventually cache bytes rival weight bytes and the "
             f"amortisation gains taper off."
         ),
     }
@@ -432,7 +432,7 @@ def bandwidth_reveal_view():
             f"A FLOP-counting model predicts ~{round(r['flop_bound_tok_s']):,} tok/s, but each decode "
             f"step actually streams {r['weights_gb']:.0f} GB of weights plus {r['kv_cache_gb']:.0f} GB "
             f"of KV cache from HBM, capping real throughput at ~{round(r['bandwidth_bound_tok_s'])} "
-            f"tok/s \u2014 about {round(gap)}x lower than the compute-only estimate."
+            f"tok/s, about {round(gap)}x lower than the compute-only estimate."
         ),
     }
     scalars_panel = {
@@ -443,7 +443,7 @@ def bandwidth_reveal_view():
         ],
         "caption": (
             f"Arithmetic intensity of roughly {r['arithmetic_intensity']:.1f} FLOP/byte sits about "
-            f"{round(ridge_gap)}x below the hardware's ridge point of {r['ridge_point']:.0f} \u2014 "
+            f"{round(ridge_gap)}x below the hardware's ridge point of {r['ridge_point']:.0f}. "
             f"decode never gets close to using the GPU's compute throughput; it's entirely limited "
             f"by how fast bytes can be pulled from memory."
         ),

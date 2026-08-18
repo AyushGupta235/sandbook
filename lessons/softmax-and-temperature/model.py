@@ -122,7 +122,7 @@ def sweep_view(preset, t_min=0.05, t_max=3.0, steps=60):
         "y_min": 0.0,
         "y_max": 1.0,
         "x_label": "temperature",
-        "y_label": "0 – 1",
+        "y_label": "0 to 1",
         "series": [
             {"label": "probability of top token", "values": top},
             {"label": "entropy ÷ ln(vocab)", "values": ent},

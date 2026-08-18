@@ -16,7 +16,7 @@
   "misconceptions": [
     {
       "claim": "The KV cache makes transformer inference faster across the board.",
-      "reality": "It only helps autoregressive decoding. Prefill still computes every position's K and V once, and the cache adds nothing there \u2014 it is pure bookkeeping. The speedup is entirely about not redoing prefill-shaped work on every new token."
+      "reality": "It only helps autoregressive decoding. Prefill still computes every position's K and V once, and the cache adds nothing there; it is pure bookkeeping. The speedup is entirely about not redoing prefill-shaped work on every new token."
     },
     {
       "claim": "You cache K, V, and Q because all three are projections of the same hidden states.",
@@ -28,7 +28,7 @@
     },
     {
       "claim": "Decoding is slow because attention over a long cache is expensive arithmetic.",
-      "reality": "Single-token decode is memory-bandwidth-bound, not FLOP-bound. Every step streams the whole weight matrix plus the whole KV cache from HBM to do one token's worth of maths \u2014 arithmetic intensity is around 1, hundreds of times below the hardware's ridge point."
+      "reality": "Single-token decode is memory-bandwidth-bound, not FLOP-bound. Every step streams the whole weight matrix plus the whole KV cache from HBM to do one token's worth of maths, so arithmetic intensity is around 1, hundreds of times below the hardware's ridge point."
     },
     {
       "claim": "Multi-query and grouped-query attention are about saving compute.",
@@ -39,7 +39,7 @@
     {
       "id": "recompute-vs-cache",
       "title": "What exactly gets recomputed",
-      "prose": "The prompt \"the cat sat\" is 3 tokens; we'll generate 3 more. At each new position the model needs one query vector (for the token being generated right now) and the full set of key/value vectors for every position seen so far \u2014 old and new. The question this module answers concretely: what work does a *no-cache* decoder redo at every step that a *cached* decoder simply skips?\n\nRun the two lanes side by side. The **no-cache lane** re-derives K and V for every position from 1 up to the current position t, every single step \u2014 because it never kept last step's projections around. The **cached lane** computed each row's K and V exactly once, the moment that row first appeared, and just reads them back for every later step. Watch the row-projection counters: no-cache accumulates 4, then 9, then 15 (4+5+6) across the three steps, while cached accumulates 1, 2, 3.\n\nThe two lanes are not approximating each other \u2014 they're computing the same attention with the same numbers. Because causal masking means a row's key and value never depend on anything that comes after it, a stored K/V row is exact and permanent; there is nothing to \"recompute better.\" Read the output vector each step: no-cache and cached match to three decimals every time. What changes between the two lanes is purely how much redundant matrix work happens, not what gets computed \u2014 the classic case where caching turns O(n\u00b2) row-projections over a generation of length n into O(n).",
+      "prose": "The prompt \"the cat sat\" is 3 tokens; we'll generate 3 more. At each new position the model needs one query vector (for the token being generated right now) and the full set of key/value vectors for every position seen so far, old and new. The question this module answers concretely: what work does a *no-cache* decoder redo at every step that a *cached* decoder simply skips?\n\nRun the two lanes side by side. The **no-cache lane** re-derives K and V for every position from 1 up to the current position t, every single step, because it never kept last step's projections around. The **cached lane** computed each row's K and V exactly once, the moment that row first appeared, and just reads them back for every later step. Watch the row-projection counters: no-cache accumulates 4, then 9, then 15 (4+5+6) across the three steps, while cached accumulates 1, 2, 3.\n\nThe two lanes are not approximating each other; they're computing the same attention with the same numbers. Because causal masking means a row's key and value never depend on anything that comes after it, a stored K/V row is exact and permanent; there is nothing to \"recompute better.\" Read the output vector each step: no-cache and cached match to three decimals every time. What changes between the two lanes is purely how much redundant matrix work happens, not what gets computed. This is the classic case where caching turns O(n\u00b2) row-projections over a generation of length n into O(n).",
       "widget": {
         "type": "step-sim",
         "title": "What exactly gets recomputed",
@@ -70,7 +70,7 @@
     {
       "id": "what-not-to-cache",
       "title": "Why Q is not in the cache",
-      "prose": "A KV cache stores keys and values \u2014 never queries. That asymmetry looks arbitrary until you count how many times each vector actually gets read during generation. Take a 100-token prompt followed by 50 generated tokens, and look specifically at position 37.\n\nThe query vector `q37` is produced once, at the step where token 37's attention output is computed, and then it is discarded. No later step ever needs *last week's question* again \u2014 decoding only ever needs the query for the *current* position. The key and value vectors `k37`/`v37` are different: causal masking means every future position, right up to the end of generation, is still allowed to attend back to position 37. So `k37` gets read again and again, long after it was written.\n\nPredict how the read counts for `q37` and `k37` compare across the whole run (1 prefill pass + 50 decode steps), then reveal the heatmap to see the pattern across *every* position, not just 37.",
+      "prose": "A KV cache stores keys and values, never queries. That asymmetry looks arbitrary until you count how many times each vector actually gets read during generation. Take a 100-token prompt followed by 50 generated tokens, and look specifically at position 37.\n\nThe query vector `q37` is produced once, at the step where token 37's attention output is computed, and then it is discarded. No later step ever needs *last week's question* again: decoding only ever needs the query for the *current* position. The key and value vectors `k37`/`v37` are different: causal masking means every future position, right up to the end of generation, is still allowed to attend back to position 37. So `k37` gets read again and again, long after it was written.\n\nPredict how the read counts for `q37` and `k37` compare across the whole run (1 prefill pass + 50 decode steps), then reveal the heatmap to see the pattern across *every* position, not just 37.",
       "widget": {
         "type": "predict-reveal",
         "title": "Why Q is not in the cache",
@@ -78,12 +78,12 @@
         "options": [
           {
             "id": "both-once",
-            "text": "Both are read exactly once \u2014 each position's vectors only matter at the step where they're created.",
+            "text": "Both are read exactly once, since each position's vectors only matter at the step where they're created.",
             "predicate": "result['q_reads'] == 1 and result['k_reads'] == 1"
           },
           {
             "id": "q1-k51",
-            "text": "q37 is read once; k37 is read 51 times \u2014 once as it's produced during the prefill pass, then once more on every one of the 50 decode steps.",
+            "text": "q37 is read once; k37 is read 51 times: once as it's produced during the prefill pass, then once more on every one of the 50 decode steps.",
             "predicate": "result['q_reads'] == 1 and result['k_reads'] == 51"
           },
           {
@@ -125,13 +125,13 @@
             }
           }
         },
-        "explanation": "q37 is consumed the instant it's produced: it turns into one row of attention output at token 37's own forward step and is never looked at again \u2014 that's 1 read, full stop. k37 (and v37 alongside it) is written once and then re-read at every subsequent step that's allowed to see position 37: the prefill pass that created it, plus each of the 50 decode steps, for 51 reads total. This is exactly the asymmetry that explains what belongs in the cache. Q is single-use, so caching it would store data nobody ever reads again. K and V are reused at every future step, so recomputing them every time would mean redoing the same projection over and over \u2014 caching them is what turns O(step\u00b2) recomputation into O(step) bookkeeping. It's also why the cache is append-only: causal masking guarantees a stored K/V row, once written, is never revisited by an earlier query and never needs to change \u2014 only new rows get appended, which is exactly the access pattern a pre-allocated buffer is built for."
+        "explanation": "q37 is consumed the instant it's produced: it turns into one row of attention output at token 37's own forward step and is never looked at again, so that's 1 read, full stop. k37 (and v37 alongside it) is written once and then re-read at every subsequent step that's allowed to see position 37: the prefill pass that created it, plus each of the 50 decode steps, for 51 reads total. This is exactly the asymmetry that explains what belongs in the cache. Q is single-use, so caching it would store data nobody ever reads again. K and V are reused at every future step, so recomputing them every time would mean redoing the same projection over and over; caching them is what turns O(step\u00b2) recomputation into O(step) bookkeeping. It's also why the cache is append-only: causal masking guarantees a stored K/V row, once written, is never revisited by an earlier query and never needs to change: only new rows get appended, which is exactly the access pattern a pre-allocated buffer is built for."
       }
     },
     {
       "id": "cache-sizing",
       "title": "How big does this thing get",
-      "prose": "The KV cache formula has no mystery in it \u2014 it's just multiplication. For every one of `n_layers` layers, every one of `n_kv_heads` key/value heads, every position in the context, and every sequence in the batch, you store one key vector and one value vector of length `head_dim`, at whatever byte width the cache is stored in. That gives `bytes = 2 * batch * seq_len * n_layers * n_kv_heads * head_dim * dtype_bytes` \u2014 the factor of 2 is simply K *and* V. Note what's absent: `n_query_heads` doesn't appear at all. Queries for past positions are used once and thrown away, which is exactly why nothing called a 'Q cache' exists.\n\nPush the sliders and watch two bars race each other: the model's weights (fixed once you pick an architecture) against the cache (which grows linearly in batch, linearly in context length, and linearly \u2014 not quadratically \u2014 in `n_kv_heads`). Try the **MHA variant** preset (32 separate KV heads) at batch 32 and an 8k context: the cache blows past both the weights *and* a single H100's 80 GB of HBM. Now switch to **Llama-3-8B GQA** (8 KV heads, same everything else) and watch the cache shrink to a quarter of what it was \u2014 that's the whole point of grouped-query attention: it doesn't touch the query heads or the FLOPs, it just means fewer K/V heads to store and stream. Drop the dtype to fp8 and it halves again.\n\nThe 'max batch that fits' readout answers the question a serving engineer actually has: after the weights occupy their fixed slice of the 80 GB, how many concurrent sequences can the rest of memory hold at this context length? Watch that number collapse as you drag context length up \u2014 it's the direct, felt consequence of the cache growing linearly in `seq_len` while your GPU's memory does not grow at all.",
+      "prose": "The KV cache formula has no mystery in it: it's just multiplication. For every one of `n_layers` layers, every one of `n_kv_heads` key/value heads, every position in the context, and every sequence in the batch, you store one key vector and one value vector of length `head_dim`, at whatever byte width the cache is stored in. That gives `bytes = 2 * batch * seq_len * n_layers * n_kv_heads * head_dim * dtype_bytes`, where the factor of 2 is simply K *and* V. Note what's absent: `n_query_heads` doesn't appear at all. Queries for past positions are used once and thrown away, which is exactly why nothing called a 'Q cache' exists.\n\nPush the sliders and watch two bars race each other: the model's weights (fixed once you pick an architecture) against the cache (which grows linearly in batch, linearly in context length, and linearly, not quadratically, in `n_kv_heads`). Try the **MHA variant** preset (32 separate KV heads) at batch 32 and an 8k context: the cache blows past both the weights *and* a single H100's 80 GB of HBM. Now switch to **Llama-3-8B GQA** (8 KV heads, same everything else) and watch the cache shrink to a quarter of what it was. That's the whole point of grouped-query attention: it doesn't touch the query heads or the FLOPs, it just means fewer K/V heads to store and stream. Drop the dtype to fp8 and it halves again.\n\nThe 'max batch that fits' readout answers the question a serving engineer actually has: after the weights occupy their fixed slice of the 80 GB, how many concurrent sequences can the rest of memory hold at this context length? Watch that number collapse as you drag context length up: it's the direct, felt consequence of the cache growing linearly in `seq_len` while your GPU's memory does not grow at all.",
       "widget": {
         "type": "param-playground",
         "title": "Sizing the KV cache against model weights and hardware",
@@ -370,7 +370,7 @@
     {
       "id": "bandwidth-bound",
       "title": "Decode is a memory problem",
-      "prose": "A FLOP-counter looks at decode and sees almost nothing to do: one new token means one query vector multiplied through the network, maybe 14 GFLOP of arithmetic on a 7B model. An A100 does 312 trillion of those per second, so naive math says decode should be blazingly fast \u2014 tens of thousands of tokens per second. That reasoning is exactly backwards for what actually limits decode speed.\n\nEvery decode step still has to *read* the entire model: every weight matrix, layer by layer, streamed out of HBM into the GPU's compute units, plus the entire KV cache built up so far. For a 7B fp16 model that's 14 GB of weights alone, and at batch 1 with a few thousand tokens of context the cache adds a few more GB on top. None of that reading disappears just because the actual multiply-add work for one token is tiny \u2014 the GPU still has to move all those bytes before it can touch them.\n\nSo the real question isn't \"how many FLOPs does one token cost?\" but \"how many bytes must cross the memory bus before I get that token?\" Divide the GPU's bandwidth by that byte count and you get a completely different, much smaller number than the FLOP-based estimate. Predict which one wins before you look.",
+      "prose": "A FLOP-counter looks at decode and sees almost nothing to do: one new token means one query vector multiplied through the network, maybe 14 GFLOP of arithmetic on a 7B model. An A100 does 312 trillion of those per second, so naive math says decode should be blazingly fast, tens of thousands of tokens per second. That reasoning is exactly backwards for what actually limits decode speed.\n\nEvery decode step still has to *read* the entire model: every weight matrix, layer by layer, streamed out of HBM into the GPU's compute units, plus the entire KV cache built up so far. For a 7B fp16 model that's 14 GB of weights alone, and at batch 1 with a few thousand tokens of context the cache adds a few more GB on top. None of that reading disappears just because the actual multiply-add work for one token is tiny; the GPU still has to move all those bytes before it can touch them.\n\nSo the real question isn't \"how many FLOPs does one token cost?\" but \"how many bytes must cross the memory bus before I get that token?\" Divide the GPU's bandwidth by that byte count and you get a completely different, much smaller number than the FLOP-based estimate. Predict which one wins before you look.",
       "widget": {
         "type": "predict-reveal",
         "title": "Is decode limited by math or by memory?",
@@ -378,17 +378,17 @@
         "options": [
           {
             "id": "compute_bound",
-            "text": "About 22,000 tok/s \u2014 decode only does ~14 GFLOP of matmul work per token, and the GPU can do 312 TFLOP/s, so 312e12 / 14e9 \u2248 22,000.",
+            "text": "About 22,000 tok/s, because decode only does ~14 GFLOP of matmul work per token, and the GPU can do 312 TFLOP/s, so 312e12 / 14e9 \u2248 22,000.",
             "predicate": "abs(result['actual_tok_s'] - 22285.71) < 500"
           },
           {
             "id": "bandwidth_bound",
-            "text": "About 125 tok/s \u2014 every step has to stream all 14 GB of weights plus a few GB of KV cache out of HBM, and 2 TB/s of bandwidth divided by ~16 GB caps it there.",
+            "text": "About 125 tok/s, because every step has to stream all 14 GB of weights plus a few GB of KV cache out of HBM, and 2 TB/s of bandwidth divided by ~16 GB caps it there.",
             "predicate": "abs(result['actual_tok_s'] - 125) < 5"
           },
           {
             "id": "middle_ground",
-            "text": "About 2,000 tok/s \u2014 somewhere between the pure-compute estimate and the pure-bandwidth estimate, since both matter.",
+            "text": "About 2,000 tok/s, somewhere between the pure-compute estimate and the pure-bandwidth estimate, since both matter.",
             "predicate": "1000 <= result['actual_tok_s'] <= 5000"
           }
         ],
@@ -400,7 +400,7 @@
           "fn": "bandwidth_reveal_view",
           "args": {}
         },
-        "explanation": "The compute-bound estimate (~22,286 tok/s) assumes the GPU is limited by arithmetic. It isn't. To produce one token, the GPU must read the full weight matrices (14 GB) and the full KV cache (~2 GB at this context length) from HBM \u2014 that's ~16 GB moved for ~14 GFLOP of actual math, an arithmetic intensity of roughly 0.9 FLOP per byte. The A100's ridge point \u2014 the intensity where compute and bandwidth limits cross \u2014 is about 156 FLOP per byte, so this workload sits nearly 180x below it, deep in bandwidth-bound territory. Dividing 2 TB/s of bandwidth by 16 GB gives the real ceiling: about 125 tok/s, matching the FLOP-based estimate's ratio almost exactly (22,286 / 125 \u2248 178, the same ~178x gap as the ridge-point comparison). Raising batch size amortises the fixed 14 GB weight read over more sequences at once, which is why serving systems batch aggressively \u2014 but the KV cache bytes scale linearly with batch, so at large batch or long context the cache itself becomes the bottleneck and the amortisation gains taper off."
+        "explanation": "The compute-bound estimate (~22,286 tok/s) assumes the GPU is limited by arithmetic. It isn't. To produce one token, the GPU must read the full weight matrices (14 GB) and the full KV cache (~2 GB at this context length) from HBM, so that's ~16 GB moved for ~14 GFLOP of actual math, an arithmetic intensity of roughly 0.9 FLOP per byte. The A100's ridge point (the intensity where compute and bandwidth limits cross) is about 156 FLOP per byte, so this workload sits nearly 180x below it, deep in bandwidth-bound territory. Dividing 2 TB/s of bandwidth by 16 GB gives the real ceiling: about 125 tok/s, matching the FLOP-based estimate's ratio almost exactly (22,286 / 125 \u2248 178, the same ~178x gap as the ridge-point comparison). Raising batch size amortises the fixed 14 GB weight read over more sequences at once, which is why serving systems batch aggressively, but the KV cache bytes scale linearly with batch, so at large batch or long context the cache itself becomes the bottleneck and the amortisation gains taper off."
       }
     }
   ]
