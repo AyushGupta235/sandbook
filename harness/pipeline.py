@@ -74,6 +74,19 @@ CURRICULUM_SCHEMA = {
         "title": {"type": "string"},
         "subtitle": {"type": "string"},
         "targets": {"type": ["string", "null"]},
+        "sources": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "url": {"type": "string"},
+                    "version": {"type": ["string", "null"]},
+                },
+                "required": ["title", "url"],
+                "additionalProperties": False,
+            },
+        },
         "packages": {"type": "array", "items": {"type": "string"}},
         "objectives": {"type": "array", "items": {"type": "string"}},
         "misconceptions": {

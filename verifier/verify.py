@@ -108,9 +108,17 @@ def check_staleness(lesson: dict, where: str, f: Findings) -> None:
     was written against a long time ago, which is how a lesson goes from correct
     to confidently outdated without anyone editing it.
     """
+    for si, source in enumerate(lesson.get("sources") or []):
+        if not isinstance(source, dict) or not source.get("url") or not source.get("title"):
+            f.error(where, f"sources[{si}] needs a title and a url; a citation nobody "
+                           "can follow is not a citation")
+
     targets = lesson.get("targets")
     if not targets:
         return
+    if not lesson.get("sources"):
+        f.warn(where, f"claims accuracy for {targets!r} but cites no source, "
+                      "so the claim rests on nothing a reader can check")
     written = lesson.get("generated_on")
     if not written:
         f.warn(where, f"claims accuracy for {targets!r} but records no date, "

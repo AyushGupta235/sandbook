@@ -210,6 +210,12 @@ def mut_en_dash_in_caption(lesson, model):
     )
 
 
+def mut_unfollowable_citation(lesson, model):
+    """A source with a title and no link cannot be checked by anyone."""
+    lesson["sources"] = [{"title": "the Kubernetes docs"}]
+    return lesson, model
+
+
 def mut_undateable_pin(lesson, model):
     """A version claim with a date nobody can read is worse than no date."""
     lesson["targets"] = "Kubernetes 1.29+"
@@ -255,6 +261,7 @@ SUITES = [
         ("rejection with no failing check", mut_grader_silent_rejection, "no indication of what is wrong"),
         ("grid columns mismatch headers", mut_sim_grid_mismatch,      "column labels"),
         ("version pin with an unreadable date", mut_undateable_pin,   "not a date"),
+        ("citation with no link",          mut_unfollowable_citation, "needs a title and a url"),
     ]),
 ]
 

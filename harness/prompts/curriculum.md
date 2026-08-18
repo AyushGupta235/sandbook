@@ -51,6 +51,7 @@ Return one JSON object and nothing else. No markdown fence, no commentary.
   "title": "Short title",
   "subtitle": "One sentence on what the learner will be able to do.",
   "targets": "version or scope this is accurate for, or null",
+  "sources": [{"title": "...", "url": "...", "version": "... or null"}],
   "packages": ["pyyaml"],
   "objectives": ["..."],
   "misconceptions": [{"claim": "what people believe", "reality": "what is true"}],
@@ -78,6 +79,12 @@ Rules:
   the presets, the values, the scenario. The builder follows it literally.
 - Set `targets` when the topic has versioned behaviour that could drift, such
   as a tool or an API. Otherwise null.
+- `sources` records what the lesson was built from, so a reader can check it
+  later. **Cite only what appears in the grounding material below.** If there is
+  no grounding material, return `[]`. A remembered or reconstructed URL is
+  worse than no citation: it looks like provenance and is not, and the reader
+  who follows it to check a claim finds nothing and cannot tell whether the
+  claim or the link is at fault. Never write a URL you have not been given.
 
 ## Topic
 
