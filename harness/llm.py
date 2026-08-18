@@ -254,19 +254,29 @@ AUTH_HELP = (
 # -------------------------------------------------------------- offline model
 
 
+_MODULE_ID = re.compile(r"^id: (\S+)$", re.MULTILINE)
+
+
 class ScriptedModel:
     """Replays recorded replies so the pipeline runs without credentials.
 
-    Replies are matched by stage in recorded order. A stage asking for more
-    replies than were recorded is an error rather than a silent fallback,
-    because a test that quietly invents model output proves nothing.
+    Replies are keyed by stage and, where the prompt names one, by module id.
+    Keying on the module matters: a recording is made under one version of the
+    pipeline and replayed under later ones, and any change to how many calls a
+    module makes would otherwise shift every subsequent module onto the wrong
+    reply. That is a test failing because the harness improved, which teaches
+    nobody anything.
+
+    A stage asking for more replies than were recorded is an error rather than
+    a silent fallback, because a test that quietly invents model output proves
+    nothing.
     """
 
     def __init__(self, calls: list[Call]):
-        self.by_stage: dict[str, list[str]] = {}
+        self.by_stage: dict[tuple[str, str | None], list[str]] = {}
         for call in calls:
-            self.by_stage.setdefault(call.stage, []).append(call.reply)
-        self.cursor: dict[str, int] = {}
+            self.by_stage.setdefault((call.stage, _module_of(call.prompt)), []).append(call.reply)
+        self.cursor: dict[tuple[str, str | None], int] = {}
         self.total_cost_usd = 0.0
 
     @classmethod
@@ -276,16 +286,32 @@ class ScriptedModel:
 
     def complete(self, *, stage: str, system: str, prompt: str,
                  schema: dict | None = None, model: str | None = None) -> Reply:
-        replies = self.by_stage.get(stage)
+        key = (stage, _module_of(prompt))
+        if key not in self.by_stage and key[1] is not None:
+            key = (stage, None)   # recordings made before prompts carried an id
+        replies = self.by_stage.get(key)
         if not replies:
-            raise ModelError(f"no scripted replies recorded for stage {stage!r}")
-        i = self.cursor.get(stage, 0)
+            raise ModelError(
+                f"no scripted replies recorded for stage {stage!r}"
+                + (f" module {key[1]!r}" if key[1] else ""))
+        i = self.cursor.get(key, 0)
         if i >= len(replies):
             raise ModelError(
-                f"stage {stage!r} asked for reply {i + 1} but only {len(replies)} were recorded"
-            )
-        self.cursor[stage] = i + 1
+                f"stage {stage!r}"
+                + (f" module {key[1]!r}" if key[1] else "")
+                + f" asked for reply {i + 1} but only {len(replies)} were recorded")
+        self.cursor[key] = i + 1
         return Reply(text=replies[i], model="scripted")
+
+
+def _module_of(prompt: str) -> str | None:
+    """The module id a prompt is about, if it names one.
+
+    Every per-module prompt carries an `id:` line describing the brief. The
+    curriculum prompt does not, and returns None.
+    """
+    found = _MODULE_ID.search(prompt or "")
+    return found.group(1) if found else None
 
 
 def save_recording(path: str | pathlib.Path, calls: list[Call]) -> None:

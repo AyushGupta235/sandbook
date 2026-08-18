@@ -72,6 +72,7 @@ without apology or padding.
 
 ## The module
 
+id: {module_id}
 Title: {module_title}
 Intent: {intent}
 
