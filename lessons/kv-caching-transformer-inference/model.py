@@ -404,7 +404,7 @@ def bandwidth_batch_scaling_view():
         "kind": "lines",
         "x": d["batches"],
         "series": [
-            {"name": "Aggregate throughput (tok/s)", "values": [round(v, 1) for v in d["throughput_tok_s"]]}
+            {"label": "Aggregate throughput (tok/s)", "values": [round(v, 1) for v in d["throughput_tok_s"]]}
         ],
         "x_label": "Batch size",
         "y_label": "tokens/sec (aggregate)",

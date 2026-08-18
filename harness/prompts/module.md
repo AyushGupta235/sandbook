@@ -26,7 +26,7 @@ The runtime does the drawing.
 | kind | required | notes |
 |---|---|---|
 | `bars` | `labels`, `values` | the two lists must be the same length |
-| `lines` | `x`, `series[].values` | every series must match the length of `x` |
+| `lines` | `x`, `series[].values`, `series[].label` | every series must match the length of `x`; the label is what the legend reads, and it is `label`, not `name` |
 | `grid` | `cells` | row and column label counts must match the cells |
 | `scalars` | `items[].value` | readouts and summary numbers |
 | `text` | `text` | a paragraph produced by a function |
