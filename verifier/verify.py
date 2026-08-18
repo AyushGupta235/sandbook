@@ -25,6 +25,10 @@ import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+import kernels  # noqa: E402  (needs ROOT on the path first)
+
 LESSONS = ROOT / "lessons"
 RUNNER = ROOT / "verifier" / "runner.py"
 TIMEOUT_S = 120
@@ -413,6 +417,27 @@ def verify_lesson(slug: str, lessons_dir: pathlib.Path | None = None) -> Finding
                 ops.append({"op": "exec", "code": widget["starter"], "tests": widget["tests"]})
                 plan.append({"kind": "starter", "where": where})
 
+    # ---- claims measured against a trusted kernel --------------------------
+    for ci, claim in enumerate(lesson.get("implements") or []):
+        where = f"implements[{ci}]"
+        fn_name, kernel_name = claim.get("fn"), claim.get("kernel")
+        if not fn_name or not kernel_name:
+            f.error(where, "an implements entry needs both 'fn' and 'kernel'")
+            continue
+        try:
+            kernel = kernels.load(kernel_name)
+        except KeyError:
+            f.error(where, f"{fn_name}() claims to implement {kernel_name!r}, "
+                           f"which is not a kernel. Available:\n{kernels.describe()}")
+            continue
+        except Exception as e:  # noqa: BLE001 - a broken kernel must not pass silently
+            f.error(where, f"kernel {kernel_name!r} failed to load: {type(e).__name__}: {e}")
+            continue
+        for pi, probe in enumerate(kernel.PROBES):
+            ops.append({"op": "call", "fn": fn_name, "args": probe})
+            plan.append({"kind": "kernel", "where": f"{where} {fn_name}() vs {kernel_name}",
+                         "kernel": kernel_name, "probe": probe, "index": pi})
+
     if f.errors:
         return f  # planning already failed; executing would only add noise
 
@@ -453,6 +478,24 @@ def verify_lesson(slug: str, lessons_dir: pathlib.Path | None = None) -> Finding
     for meta, res in zip(plan, out.get("results", [])):
         where = meta["where"]
         kind = meta["kind"]
+
+        if kind == "kernel":
+            if not res.get("ok"):
+                f.error(where, f"probe {meta['index']} {meta['probe']} raised: {res.get('error')}")
+                continue
+            kernel = kernels.load(meta["kernel"])
+            try:
+                expected = kernel.reference(**meta["probe"])
+            except Exception as e:  # noqa: BLE001
+                f.error(where, f"the kernel itself raised on probe {meta['index']}: "
+                               f"{type(e).__name__}: {e}")
+                continue
+            tol = getattr(kernel, "TOLERANCE", kernels.DEFAULT_TOLERANCE)
+            found = kernels.disagreement(res.get("result"), expected, tol)
+            if found:
+                f.error(where, f"disagrees with the kernel on probe {meta['index']} "
+                               f"{meta['probe']}. {found}")
+            continue
 
         if kind in ("view", "scalar", "sim-init", "sim-step"):
             if not res.get("ok"):

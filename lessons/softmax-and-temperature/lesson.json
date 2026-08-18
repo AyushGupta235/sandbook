@@ -26,6 +26,12 @@
       "reality": "It is a correctness requirement. Without it, realistic logit magnitudes overflow the exponential."
     }
   ],
+  "implements": [
+    {
+      "fn": "softmax_probs",
+      "kernel": "softmax"
+    }
+  ],
   "modules": [
     {
       "id": "shape",
@@ -41,10 +47,22 @@
             "kind": "choice",
             "default": "mixed",
             "options": [
-              { "value": "mixed", "label": "mixed: one clear leader, real competition behind" },
-              { "value": "confident", "label": "confident: one token far ahead" },
-              { "value": "close", "label": "close call: five near-tied tokens" },
-              { "value": "flat", "label": "flat: all logits identical" }
+              {
+                "value": "mixed",
+                "label": "mixed: one clear leader, real competition behind"
+              },
+              {
+                "value": "confident",
+                "label": "confident: one token far ahead"
+              },
+              {
+                "value": "close",
+                "label": "close call: five near-tied tokens"
+              },
+              {
+                "value": "flat",
+                "label": "flat: all logits identical"
+              }
             ]
           },
           {
@@ -60,28 +78,56 @@
         ],
         "view": {
           "fn": "dist_view",
-          "args": { "preset": { "param": "preset" }, "temperature": { "param": "temperature" } }
+          "args": {
+            "preset": {
+              "param": "preset"
+            },
+            "temperature": {
+              "param": "temperature"
+            }
+          }
         },
         "readouts": [
           {
             "label": "Top-token probability",
             "fn": "readout_top_prob",
             "format": ".3f",
-            "args": { "preset": { "param": "preset" }, "temperature": { "param": "temperature" } }
+            "args": {
+              "preset": {
+                "param": "preset"
+              },
+              "temperature": {
+                "param": "temperature"
+              }
+            }
           },
           {
             "label": "Entropy",
             "fn": "readout_entropy",
             "format": ".3f",
             "unit": "nats",
-            "args": { "preset": { "param": "preset" }, "temperature": { "param": "temperature" } }
+            "args": {
+              "preset": {
+                "param": "preset"
+              },
+              "temperature": {
+                "param": "temperature"
+              }
+            }
           },
           {
             "label": "Effective choices",
             "fn": "readout_effective_choices",
             "format": ".2f",
             "unit": "tokens",
-            "args": { "preset": { "param": "preset" }, "temperature": { "param": "temperature" } }
+            "args": {
+              "preset": {
+                "param": "preset"
+              },
+              "temperature": {
+                "param": "temperature"
+              }
+            }
           }
         ]
       }
@@ -114,16 +160,33 @@
         "check": {
           "fn": "softmax_probs",
           "args": {
-            "logits": { "const": [2.0, 1.9, 1.7, 1.5, 1.2] },
-            "temperature": { "const": 0.1 }
+            "logits": {
+              "const": [
+                2.0,
+                1.9,
+                1.7,
+                1.5,
+                1.2
+              ]
+            },
+            "temperature": {
+              "const": 0.1
+            }
           }
         },
         "view": {
           "fn": "dist_view",
-          "args": { "preset": { "const": "close" }, "temperature": { "const": 0.1 } }
+          "args": {
+            "preset": {
+              "const": "close"
+            },
+            "temperature": {
+              "const": 0.1
+            }
+          }
         },
-        "explanation": "Sharpness is set by logit gaps divided by T, never by T alone. Here the top two logits differ by 0.1; dividing by T = 0.1 makes that gap exactly 1.0, so the two probabilities end up in a ratio of e¹ ≈ 2.72. Sharper, but nowhere near winner-take-all. Contrast the mixed preset, whose leading gap of 0.4 becomes 4.0 and produces a ratio of e⁴ ≈ 55. This is why 'low temperature' is not a portable description of behaviour: the same T does very different things to different distributions."
-    }
+        "explanation": "Sharpness is set by logit gaps divided by T, never by T alone. Here the top two logits differ by 0.1; dividing by T = 0.1 makes that gap exactly 1.0, so the two probabilities end up in a ratio of e\u00b9 \u2248 2.72. Sharper, but nowhere near winner-take-all. Contrast the mixed preset, whose leading gap of 0.4 becomes 4.0 and produces a ratio of e\u2074 \u2248 55. This is why 'low temperature' is not a portable description of behaviour: the same T does very different things to different distributions."
+      }
     },
     {
       "id": "sweep",
@@ -139,16 +202,32 @@
             "kind": "choice",
             "default": "mixed",
             "options": [
-              { "value": "mixed", "label": "mixed" },
-              { "value": "confident", "label": "confident" },
-              { "value": "close", "label": "close call" },
-              { "value": "flat", "label": "flat" }
+              {
+                "value": "mixed",
+                "label": "mixed"
+              },
+              {
+                "value": "confident",
+                "label": "confident"
+              },
+              {
+                "value": "close",
+                "label": "close call"
+              },
+              {
+                "value": "flat",
+                "label": "flat"
+              }
             ]
           }
         ],
         "view": {
           "fn": "sweep_view",
-          "args": { "preset": { "param": "preset" } }
+          "args": {
+            "preset": {
+              "param": "preset"
+            }
+          }
         }
       }
     },
@@ -164,13 +243,33 @@
         "init": {
           "fn": "nucleus_init",
           "args": {
-            "preset": { "const": "mixed" },
-            "temperature": { "const": 1.0 },
-            "top_p": { "const": 0.9 }
+            "preset": {
+              "const": "mixed"
+            },
+            "temperature": {
+              "const": 1.0
+            },
+            "top_p": {
+              "const": 0.9
+            }
           }
         },
-        "step": { "fn": "nucleus_step", "args": { "state": { "state": true } } },
-        "view": { "fn": "nucleus_view", "args": { "state": { "state": true } } }
+        "step": {
+          "fn": "nucleus_step",
+          "args": {
+            "state": {
+              "state": true
+            }
+          }
+        },
+        "view": {
+          "fn": "nucleus_view",
+          "args": {
+            "state": {
+              "state": true
+            }
+          }
+        }
       }
     },
     {
@@ -185,7 +284,7 @@
         "solution": "import math\n\n\ndef softmax(logits, temperature):\n    scaled = [x / temperature for x in logits]\n    shift = max(scaled)\n    exps = [math.exp(x - shift) for x in scaled]\n    total = sum(exps)\n    return [e / total for e in exps]\n",
         "tests": "import math\n\ncases = [\n    ([3.0, 2.6, 2.0, 0.5, -0.5], 1.0),\n    ([1.0, 2.0, 3.0], 0.5),\n    ([0.0, 0.0, 0.0, 0.0], 2.0),\n    ([2.0, 1.9, 1.7, 1.5, 1.2], 0.1),\n]\n\nfor logits, t in cases:\n    got = softmax(logits, t)\n    want = softmax_probs(logits, t)\n    assert len(got) == len(want), f\"softmax({logits}, {t}) returned {len(got)} values, expected {len(want)}\"\n    assert abs(sum(got) - 1.0) < 1e-9, f\"probabilities must sum to 1, got {sum(got)}\"\n    for g, w in zip(got, want):\n        assert abs(g - w) < 1e-9, f\"softmax({logits}, {t}) gave {[round(x, 5) for x in got]}, expected {[round(x, 5) for x in want]}\"\n\nprint(f\"{len(cases)} ordinary cases passed\")\n\ntry:\n    big = softmax([1000.0, 1001.0], 1.0)\nexcept OverflowError:\n    raise AssertionError(\n        \"math.exp overflowed on logits of size ~1000, which real models produce routinely. \"\n        \"Subtract max(scaled) from every element before exponentiating: it cancels out of the \"\n        \"ratio, so the answer is unchanged, but it forces every exponent to be <= 0.\"\n    )\n\nassert all(math.isfinite(x) for x in big), \"large logits produced inf or nan\"\nassert abs(big[1] - 1.0 / (1.0 + math.exp(-1.0))) < 1e-9, \"large-logit case returned the wrong distribution\"\nprint(\"large-logit case passed\")\n",
         "hints": [
-          "Softmax is a ratio. If you add the same constant c to every scaled logit, exp(x+c) = exp(x)·exp(c) appears in both the numerator and the denominator, so it cancels and the output is unchanged.",
+          "Softmax is a ratio. If you add the same constant c to every scaled logit, exp(x+c) = exp(x)\u00b7exp(c) appears in both the numerator and the denominator, so it cancels and the output is unchanged.",
           "You get to choose c. Pick c = -max(scaled) so the largest exponent becomes exp(0) = 1 and every other one is smaller. Nothing can overflow after that."
         ]
       }

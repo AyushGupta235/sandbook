@@ -153,6 +153,41 @@ def mut_grader_silent_rejection(lesson, model):
     )
 
 
+def mut_kernel_disagreement(lesson, model):
+    """A softmax that ignores temperature entirely.
+
+    The kind of wrong that survives every other check in here: it returns the
+    right shape, the probabilities still sum to 1, every view still renders.
+    Only something that knows the right answer independently can catch it, and
+    only at a temperature other than 1.
+    """
+    return lesson, model + (
+        "\n\ndef softmax_probs(logits, temperature):\n"
+        "    shift = max(logits)\n"
+        "    exps = [math.exp(float(x) - shift) for x in logits]\n"
+        "    total = sum(exps)\n"
+        "    return [e / total for e in exps]\n"
+    )
+
+
+def mut_kernel_off_by_a_little(lesson, model):
+    """Right formula, wrong direction: temperature multiplied, not divided."""
+    return lesson, model + (
+        "\n\ndef softmax_probs(logits, temperature):\n"
+        "    scaled = [float(x) * max(float(temperature), 1e-6) for x in logits]\n"
+        "    shift = max(scaled)\n"
+        "    exps = [math.exp(x - shift) for x in scaled]\n"
+        "    total = sum(exps)\n"
+        "    return [e / total for e in exps]\n"
+    )
+
+
+def mut_unknown_kernel(lesson, model):
+    """A claim against a kernel that does not exist must not pass quietly."""
+    lesson["implements"] = [{"fn": "softmax_probs", "kernel": "softmax_but_better"}]
+    return lesson, model
+
+
 def mut_em_dash_in_prose(lesson, model):
     """House style: an em-dash written straight into the lesson config."""
     lesson["modules"][0]["prose"] += (
@@ -200,6 +235,9 @@ SUITES = [
         ("simulation never terminates",  mut_nonterminating_sim,      "never set done"),
         ("em-dash written into prose",   mut_em_dash_in_prose,        "em-dash in"),
         ("en-dash only in a rendered caption", mut_en_dash_in_caption, "en-dash in"),
+        ("claimed primitive ignores temperature", mut_kernel_disagreement, "disagrees with the kernel"),
+        ("claimed primitive scales the wrong way", mut_kernel_off_by_a_little, "disagrees with the kernel"),
+        ("claim against a kernel that does not exist", mut_unknown_kernel, "not a kernel"),
     ]),
     (YAML_LESSON, [
         ("graded starter already passes", mut_graded_starter_passes,  "not broken"),
