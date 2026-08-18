@@ -93,6 +93,40 @@ def case_token_bucket() -> str:
             f"{report.repairs} repair round(s), lesson verifies clean")
 
 
+def case_temporal() -> str:
+    """The infra-domain golden topic, recorded from a live build.
+
+    Token-bucket covers AI-ish numeric content. This one covers the other shape
+    the harness has to handle: an infra topic whose exercise is a code-cell, and
+    a build where two of six modules were genuinely unbuildable. Both survived
+    the same pipeline, which is the claim being regressed.
+    """
+    report, findings, _, document, source = build_with(FIXTURES / "temporal.json",
+                                                       "Temporal workflow determinism")
+
+    check(report.ok, f"the Temporal build should have produced a lesson: {report.dropped}")
+    check(len(report.shipped) == 4, f"expected 4 modules to ship, got {report.shipped}")
+    check(sorted(mid for mid, _ in report.dropped)
+          == ["safe-edit-or-broken-deploy", "which-bound-fires-first"],
+          f"unexpected drops: {[m for m, _ in report.dropped]}")
+
+    ids = [m["id"] for m in document["modules"]]
+    for dropped, _ in report.dropped:
+        check(dropped not in ids, f"dropped module {dropped} leaked into the lesson")
+
+    # The exercise is the point of an infra lesson: the learner writes the
+    # thing. It also went through a repair round before it passed.
+    kinds = {m["widget"]["type"] for m in document["modules"]}
+    check("code-cell" in kinds, f"the exercise did not survive; shipped {kinds}")
+    check(report.repairs > 0, "expected at least one repair round in this recording")
+    check(findings is not None and findings.errors == 0,
+          f"the assembled lesson does not verify: {findings.items if findings else None}")
+    check("def " in source, "model.py carries no functions")
+
+    return (f"shipped {len(report.shipped)}, dropped {len(report.dropped)}, "
+            f"exercise survived, lesson verifies clean")
+
+
 def case_nothing_survives() -> str:
     """Every module is unrepairable, so the build must write nothing."""
     broken_module = {
@@ -248,6 +282,7 @@ def case_review_blocks_a_false_claim() -> str:
 
 CASES = [
     ("token-bucket: repair and fail-closed drop", case_token_bucket),
+    ("temporal: infra topic with a code-cell", case_temporal),
     ("nothing survives: writes nothing", case_nothing_survives),
     ("malformed reply: rebuilt, not dropped", case_malformed_reply_is_retried),
     ("review: false claim blocked and repaired", case_review_blocks_a_false_claim),
