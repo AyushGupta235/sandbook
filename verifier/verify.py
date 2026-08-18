@@ -32,6 +32,11 @@ TIMEOUT_S = 120
 WIDGET_TYPES = {"param-playground", "predict-reveal", "step-sim", "code-cell"}
 VIEW_KINDS = {"bars", "lines", "grid", "scalars", "text", "stack"}
 
+# House style, enforced rather than requested. The prompts ask for this too, but
+# a prompt is a request and a check is a guarantee, and asking alone did not
+# work: the first generated lesson came back with 38 of them.
+BANNED_CHARS = {"—": "em-dash", "–": "en-dash"}
+
 
 class Findings:
     def __init__(self) -> None:
@@ -50,6 +55,38 @@ class Findings:
     @property
     def warnings(self) -> int:
         return sum(1 for s, _, _ in self.items if s == "WARN")
+
+
+# ----------------------------------------------------------------- house style
+
+
+def _excerpt(text: str, char: str, span: int = 34) -> str:
+    """The offending text with a little context, on one line."""
+    i = text.find(char)
+    lo, hi = max(0, i - span), min(len(text), i + span + 1)
+    return ("..." if lo else "") + " ".join(text[lo:hi].split()) + ("..." if hi < len(text) else "")
+
+
+def check_prose(node, where: str, f: Findings, path: str = "") -> None:
+    """Flag banned punctuation anywhere a learner can read it.
+
+    Walks both the static lesson.json and the values that come back from
+    executed views, because a caption assembled inside an f-string reaches the
+    learner exactly like one written in the config, and only one of those two
+    is visible to a static pass.
+    """
+    if isinstance(node, str):
+        for char, name in BANNED_CHARS.items():
+            if char in node:
+                f.error(where, f"{name} in {path or 'text'}: {_excerpt(node, char)!r} "
+                               "(use a comma, a colon, a semicolon, or two sentences)")
+                return
+    elif isinstance(node, dict):
+        for key, value in node.items():
+            check_prose(value, where, f, f"{path}.{key}" if path else str(key))
+    elif isinstance(node, list):
+        for i, value in enumerate(node):
+            check_prose(value, where, f, f"{path}[{i}]")
 
 
 # --------------------------------------------------------------- view checking
@@ -256,12 +293,15 @@ def verify_lesson(slug: str, lessons_dir: pathlib.Path | None = None) -> Finding
         return f
     source = model_path.read_text()
 
+    check_prose({k: v for k, v in lesson.items() if k != "modules"}, slug, f)
+
     # ---- plan the execution ops -------------------------------------------
     ops: list[dict] = []
     plan: list[dict] = []  # parallel metadata describing what each op proves
 
     for mi, module in enumerate(lesson.get("modules", [])):
         mid = module.get("id") or f"modules[{mi}]"
+        check_prose(module, mid, f)
         widget = module.get("widget")
         if not module.get("title"):
             f.warn(mid, "module has no title")
@@ -421,6 +461,7 @@ def verify_lesson(slug: str, lessons_dir: pathlib.Path | None = None) -> Finding
 
         if kind == "view":
             check_view(res.get("result"), where, f)
+            check_prose(res.get("result"), where, f)
 
         elif kind == "scalar":
             v = res.get("result")
@@ -467,6 +508,7 @@ def verify_lesson(slug: str, lessons_dir: pathlib.Path | None = None) -> Finding
             if not isinstance(result, dict) or "passed" not in result:
                 f.error(where, "grader must return an object with a 'passed' boolean")
                 continue
+            check_prose(result, where, f)
             if kind == "graded-solution" and not result["passed"]:
                 f.error(where, "the provided solution is rejected by its own grader: "
                                f"{result.get('message', '(no message)')}")

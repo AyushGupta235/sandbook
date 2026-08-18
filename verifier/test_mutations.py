@@ -153,6 +153,28 @@ def mut_grader_silent_rejection(lesson, model):
     )
 
 
+def mut_em_dash_in_prose(lesson, model):
+    """House style: an em-dash written straight into the lesson config."""
+    lesson["modules"][0]["prose"] += (
+        "\n\nTemperature is not a confidence knob — it reshapes the distribution.")
+    return lesson, model
+
+
+def mut_en_dash_in_caption(lesson, model):
+    """The harder case: a dash that only exists once a view has run.
+
+    Nothing in lesson.json contains it, so a static scan over the config sees a
+    clean lesson. It reaches the learner all the same.
+    """
+    return lesson, model + (
+        "\n\n_orig_sweep_view = sweep_view\n"
+        "def sweep_view(preset, t_min=0.05, t_max=3.0, steps=60):\n"
+        "    v = _orig_sweep_view(preset, t_min, t_max, steps)\n"
+        "    v['caption'] = 'entropy rises with temperature \\u2013 slowly at first'\n"
+        "    return v\n"
+    )
+
+
 def mut_sim_grid_mismatch(lesson, model):
     """Scheduler grid with more columns than it has headers."""
     return lesson, model + (
@@ -176,6 +198,8 @@ SUITES = [
         ("widget calls a missing fn",    mut_missing_function,        "no such function"),
         ("slider default out of range",  mut_bad_param_default,       "outside"),
         ("simulation never terminates",  mut_nonterminating_sim,      "never set done"),
+        ("em-dash written into prose",   mut_em_dash_in_prose,        "em-dash in"),
+        ("en-dash only in a rendered caption", mut_en_dash_in_caption, "en-dash in"),
     ]),
     (YAML_LESSON, [
         ("graded starter already passes", mut_graded_starter_passes,  "not broken"),
