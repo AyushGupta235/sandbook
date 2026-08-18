@@ -103,6 +103,22 @@ lesson is rejected. `step` must not mutate the state it is given.
 {"type": "code-cell", "title": "...", "language": "python", "task": "...",
  "starter": "...", "solution": "...", "tests": "...", "hints": ["...", "..."]}
 ```
+This is the one widget whose config names no function, which does **not** mean
+you write none. Ship the reference implementation the tests check against, in
+`functions`, and have `tests` compare the learner's output to it:
+
+```python
+# in functions: the trusted version, under a different name
+def softmax_probs(logits, temperature): ...
+
+# in tests: the learner's `softmax` is compared against it, case by case
+got, want = softmax(logits, t), softmax_probs(logits, t)
+assert abs(got[0] - want[0]) < 1e-9, "..."
+```
+
+Checking against a reference beats hardcoding expected numbers: it covers more
+cases, and it cannot drift from what the rest of the lesson teaches.
+
 The hidden `tests` run against the learner's code with the lesson's own model
 functions in scope, so a check can compare against a trusted implementation.
 **The solution must pass the tests and the starter must fail them.** A starter
@@ -165,6 +181,8 @@ Return one JSON object and nothing else.
 
 - Every function the widget names must appear in `functions`, and every entry's
   `name` must match the `def` in its `source`.
+- **`functions` is never empty**, including for a code-cell whose widget config
+  names nothing. An empty list is rejected and the module is thrown away.
 - Function names must be unique across the whole lesson. Names already taken by
   other modules are listed below; do not reuse them.
 - Shared helpers are fine. Put them in this module's `functions` and give them
