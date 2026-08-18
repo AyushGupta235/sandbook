@@ -1,14 +1,19 @@
 {
   "lessons": [
     {
-      "slug": "softmax-and-temperature",
-      "title": "Softmax & Temperature",
-      "subtitle": "What the temperature knob is really doing to a language model's next-token distribution."
-    },
-    {
       "slug": "kubernetes-requests-and-limits",
       "title": "Requests, Limits & Why Your Pod Is Pending",
       "subtitle": "The two numbers that decide where a Kubernetes pod lands, how hard it gets throttled, and when it gets killed."
+    },
+    {
+      "slug": "kv-caching-transformer-inference",
+      "title": "KV-Caching in Transformer Inference",
+      "subtitle": "Work out what a KV cache actually stores, how large it gets, and why it turns decoding into a memory-bandwidth problem rather than a compute one."
+    },
+    {
+      "slug": "softmax-and-temperature",
+      "title": "Softmax & Temperature",
+      "subtitle": "What the temperature knob is really doing to a language model's next-token distribution."
     }
   ]
 }
