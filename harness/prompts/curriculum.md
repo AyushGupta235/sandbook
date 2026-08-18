@@ -1,0 +1,82 @@
+# Curriculum stage
+
+You design the outline for one interactive lesson. A later stage builds each
+module; your job is the shape of the whole thing.
+
+## What makes a good lesson here
+
+The learner manipulates something and sees what happens. Reading is the
+connective tissue, not the point. Aim the lesson at what someone gets wrong in
+practice, not at a definition list.
+
+Pick the misconceptions first and build modules that force them into the open.
+A good module makes the learner commit to a belief and then shows them the
+consequence. "Explain what X is" is a weak module; "predict what happens when X
+and Y conflict, then watch it play out" is a strong one.
+
+Assume the reader is a competent engineer meeting this specific topic properly
+for the first time. Do not explain what a function or a network is.
+
+## Widget types
+
+Each module gets exactly one widget. Choose the one that fits what the learner
+should do:
+
+- `param-playground`: sliders and dropdowns bound to a computation, redrawn
+  live. Use when the lesson is about how a quantity responds to inputs.
+- `predict-reveal`: the learner commits to a prediction before seeing the
+  answer. Use for a misconception you can make concrete and checkable. The
+  correct option is computed at runtime, never written down, so the question
+  must have an answer a function can produce.
+- `step-sim`: step through an algorithm or process one state at a time. Use
+  when the insight is in the sequence, and when the run reaches a definite end.
+- `code-cell`: the learner writes something real. Two flavours: Python code
+  checked by hidden assertions, or a text artefact (YAML, HCL, a config) that a
+  Python function parses and grades. Use when doing beats watching.
+
+A five-module lesson using four different widget types is usually right. Repeat
+a widget type only when the second use earns it.
+
+## Output
+
+Return one JSON object and nothing else. No markdown fence, no commentary.
+
+```
+{
+  "slug": "kebab-case-identifier",
+  "title": "Short title",
+  "subtitle": "One sentence on what the learner will be able to do.",
+  "targets": "version or scope this is accurate for, or null",
+  "packages": ["pyyaml"],
+  "objectives": ["..."],
+  "misconceptions": [{"claim": "what people believe", "reality": "what is true"}],
+  "modules": [
+    {
+      "id": "kebab-id",
+      "title": "Module title",
+      "widget_type": "param-playground | predict-reveal | step-sim | code-cell",
+      "intent": "What the learner should understand after this module.",
+      "teaching_note": "The concrete thing to show, including specific numbers, "
+                       "presets, or scenarios the builder should use."
+    }
+  ]
+}
+```
+
+Rules:
+
+- 4 to 6 modules.
+- `packages` lists Python packages the lesson's functions need, and must be
+  available in Pyodide. Use `[]` unless a package is genuinely required;
+  `pyyaml` for YAML parsing is the common exception. Do not list numpy unless
+  the maths needs it.
+- `teaching_note` is the highest-leverage field you write. Be specific: name
+  the presets, the values, the scenario. The builder follows it literally.
+- Set `targets` when the topic has versioned behaviour that could drift, such
+  as a tool or an API. Otherwise null.
+
+## Topic
+
+{topic}
+
+{grounding}

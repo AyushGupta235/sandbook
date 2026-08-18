@@ -1,2 +1,7 @@
 #!/usr/bin/env bash
-exec python3 "$(dirname "$0")/harness/cli.py" "$@"
+# Prefer the project venv (it has claude-agent-sdk and pyyaml); fall back to python3.
+here="$(cd "$(dirname "$0")" && pwd)"
+if [ -x "$here/.venv/bin/python" ]; then
+  exec "$here/.venv/bin/python" "$here/harness/cli.py" "$@"
+fi
+exec python3 "$here/harness/cli.py" "$@"

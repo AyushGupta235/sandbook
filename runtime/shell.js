@@ -19,7 +19,11 @@ const WIDGETS = {
   "code-cell": codeCell,
 };
 
-const LESSON_ROOT = "../lessons";
+// Lessons live in ../lessons; freshly generated drafts live in ../output and
+// are opened with ?from=output. Only these two roots are accepted, so a URL
+// cannot point the loader at an arbitrary path.
+const ROOTS = { lessons: "../lessons", output: "../output" };
+const LESSON_ROOT = ROOTS[new URLSearchParams(location.search).get("from")] || ROOTS.lessons;
 const main = document.getElementById("main");
 const statusEl = document.getElementById("py-status");
 const titleEl = document.getElementById("topbar-title");
@@ -78,11 +82,14 @@ function setStatus(state, text) {
 async function renderLibrary() {
   titleEl.textContent = "";
   statusEl.hidden = true;
-  let lessons = [];
-  try {
-    const res = await fetch(`${LESSON_ROOT}/index.json`, { cache: "no-store" });
-    if (res.ok) lessons = (await res.json()).lessons || [];
-  } catch { /* fall through to empty state */ }
+  const lessons = [];
+  for (const [where, root] of Object.entries(ROOTS)) {
+    try {
+      const res = await fetch(`${root}/index.json`, { cache: "no-store" });
+      if (!res.ok) continue;
+      for (const l of (await res.json()).lessons || []) lessons.push({ ...l, where });
+    } catch { /* a missing index just means nothing built there yet */ }
+  }
 
   main.replaceChildren();
   main.appendChild(h("div", { class: "lesson-head" }, [
@@ -96,8 +103,13 @@ async function renderLibrary() {
   }
   const lib = h("div", { class: "library" });
   for (const l of lessons) {
-    lib.appendChild(h("a", { class: "lesson-card", href: `./index.html?lesson=${encodeURIComponent(l.slug)}` }, [
-      h("h3", { text: l.title || l.slug }),
+    const query = `?lesson=${encodeURIComponent(l.slug)}`
+      + (l.where === "output" ? "&from=output" : "");
+    lib.appendChild(h("a", { class: "lesson-card", href: `./index.html${query}` }, [
+      h("h3", {}, [
+        l.title || l.slug,
+        l.where === "output" ? h("span", { class: "draft-tag", text: "draft" }) : null,
+      ]),
       h("p", { text: l.subtitle || "" }),
     ]));
   }

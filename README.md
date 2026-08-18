@@ -34,9 +34,10 @@ Three rules do most of the work.
 
 ## Status
 
-Runtime, widget library, sandbox, verifier, CLI, and two hand-written reference
-lessons, working end to end. Lesson generation is the next piece. Until then
-lessons are written by hand and held to the same verifier.
+Runtime, widget library, sandbox, verifier, generation pipeline, and CLI, plus
+two hand-written reference lessons. The pipeline is tested end to end against
+recorded model replies. Live generation needs a working `claude` login (see
+Generating a lesson below).
 
 ## Try it
 
@@ -49,8 +50,38 @@ Then open <http://localhost:8765/runtime/index.html>.
 ```bash
 ./sandbook list        # built lessons
 ./sandbook verify      # hold every lesson to the contract
-./sandbook selftest    # check that the verifier still catches planted defects
+./sandbook selftest    # verifier mutation suite plus pipeline regression
 ```
+
+## Generating a lesson
+
+```bash
+./sandbook build "KV-caching in transformer inference"
+```
+
+The pipeline designs a curriculum, builds each module, and verifies each one as
+it goes. A module the verifier rejects is sent back with the findings, up to
+three times. A module that still fails is **dropped and reported rather than
+shipped**, so a lesson that reaches disk has cleared the same bar as a
+hand-written one. If nothing survives, nothing is written.
+
+Lessons land in a gitignored `output/`. Read the draft in the browser, then:
+
+```bash
+./sandbook promote <slug>
+```
+
+Promotion re-runs the verifier and reverts if it fails, so only reviewed,
+passing lessons enter `lessons/`.
+
+Generation authenticates through the Claude Agent SDK, which runs your local
+`claude` CLI and therefore uses your existing subscription rather than a
+separate API key. If it reports an expired OAuth session, run `claude` and then
+`/login`. Nothing else in the project needs credentials.
+
+`--replay <recording>` runs the whole pipeline from recorded replies with no
+model calls, which is how the regression tests work; `--record <file>` saves a
+live run for replay later.
 
 Learner code runs in Pyodide inside a web worker. The verifier runs the same code
 in a subprocess through the same bootstrap. Nothing is installed globally, and
@@ -63,8 +94,9 @@ the only network request is the Pyodide download from jsDelivr.
 | `runtime/` | Shell, widgets, SVG renderer. Hand-written, never generated. |
 | `runtime/sandbox_bootstrap.py` | Sandbox semantics shared by browser and verifier. |
 | `lessons/<slug>/` | A lesson: `lesson.json` plus `model.py`. |
-| `verifier/` | Contract checks, subprocess runner, mutation suite. |
-| `harness/` | CLI. The generation pipeline lands here next. |
+| `verifier/` | Contract checks, subprocess runner, mutation suite, pipeline regression. |
+| `harness/` | CLI, generation pipeline, and the prompts that encode the contract. |
+| `output/` | Generated drafts, gitignored, promoted into `lessons/` after review. |
 
 ## On trusting the output
 
@@ -74,8 +106,10 @@ explanation with matching code would pass today. Closing that gap needs trusted
 reference implementations for known primitives plus a separate review pass
 against cited sources, which is planned but not built.
 
-`./sandbook selftest` is how the verifier earns trust: it plants 17 known defects
-across both lessons and confirms each one is caught. A verifier that has never
+`./sandbook selftest` is how that machinery earns trust. It plants 17 known
+defects across both lessons and confirms each is caught, then runs the pipeline
+against recorded replies and confirms it repairs what it can, drops what it
+cannot, and writes nothing when nothing survives. A verifier that has never
 rejected anything is not evidence of much. Every new check should ship with the
 mutation that proves it fires.
 

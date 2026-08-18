@@ -510,6 +510,19 @@ td.cell-recomputed { background: var(--bad-soft); color: var(--bad); }
 }
 .lesson-card:hover { border-color: var(--accent); }
 .lesson-card h3 { margin: 0 0 5px; font-size: 1.02rem; }
+.draft-tag {
+  margin-left: 8px;
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 2px 7px;
+  border-radius: 99px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  vertical-align: middle;
+}
 .lesson-card p { margin: 0; color: var(--text-dim); font-size: 0.88rem; }
 
 @media (max-width: 620px) {
