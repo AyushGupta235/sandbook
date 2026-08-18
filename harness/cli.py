@@ -78,7 +78,8 @@ def cmd_build(args: argparse.Namespace) -> int:
     print(f"building a lesson on: {args.topic}")
     try:
         report = pipeline.build(model, args.topic, output_root=OUTPUT,
-                                grounding=grounding, on_event=on_event)
+                                grounding=grounding, review=args.review,
+                                on_event=on_event)
     except ModelAuthError as e:
         print(f"\n{e}", file=sys.stderr)
         return 2
@@ -106,6 +107,12 @@ def cmd_build(args: argparse.Namespace) -> int:
         print(f"  {len(report.dropped)} module(s) dropped rather than shipped broken:")
         for mid, findings in report.dropped:
             print(f"    {mid}: {findings[0][2][:120]}")
+    if report.reviewed:
+        print(f"  {report.reviewed} module(s) reviewed for false claims")
+    if report.review_warnings:
+        print(f"  {len(report.review_warnings)} review warning(s), not blocking:")
+        for where, message in report.review_warnings[:5]:
+            print(f"    {where}: {message[:110]}")
     if report.cost_usd:
         print(f"  cost: ${report.cost_usd:.2f}")
     if getattr(model, "retries", 0):
@@ -225,6 +232,9 @@ def main(argv: list[str] | None = None) -> int:
     p_build = sub.add_parser("build", help="generate a lesson into output/")
     p_build.add_argument("topic", help="what the lesson should teach")
     p_build.add_argument("--grounding", help="file of source notes to ground the lesson in")
+    p_build.add_argument("--review", action="store_true",
+                         help="have a fresh context check each module for false claims "
+                              "(slower, and roughly doubles the cost)")
     p_build.add_argument("--record", help="save the model calls to this file for replay")
     p_build.add_argument("--replay", help="replay a recording instead of calling the model")
     p_build.set_defaults(func=cmd_build)

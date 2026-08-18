@@ -22,6 +22,7 @@ import json
 import pathlib
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass, field
@@ -158,6 +159,8 @@ class BuildReport:
     dropped: list[tuple[str, list]] = field(default_factory=list)
     repairs: int = 0
     cost_usd: float = 0.0
+    reviewed: int = 0
+    review_warnings: list[tuple[str, str]] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -374,11 +377,151 @@ def errors_only(findings: list) -> list:
     return [f for f in findings if f[0] == "ERROR"]
 
 
+# ------------------------------------------------------------------- review
+
+
+RUNNER = ROOT / "verifier" / "runner.py"
+
+
+def module_facts(curriculum: dict, module: BuiltModule, accepted: list[BuiltModule]) -> str:
+    """Run the module's own functions and report what they return.
+
+    A reviewer reading prose and source alone has to trust its own arithmetic
+    about code it cannot execute, which is exactly the weakness that lets a
+    confident wrong explanation through. Showing it the real values turns most
+    of the judgement into a comparison.
+    """
+    from verify import Findings, resolve_args  # noqa: PLC0415 - avoids an import cycle
+
+    widget = module.widget
+    scratch = Findings()
+    ops, labels = [], []
+
+    def add(op: dict, label: str) -> None:
+        ops.append(op)
+        labels.append(label)
+
+    wtype = widget.get("type")
+    if wtype == "predict-reveal":
+        options = widget.get("options") or []
+        check = widget.get("check") or {}
+        args = resolve_args(check.get("args"), {}, "review", set(), scratch)
+        add({"op": "check", "fn": check.get("fn"), "args": args,
+             "predicates": [o.get("predicate", "False") for o in options]},
+            "derived answer")
+        add({"op": "call", "fn": check.get("fn"), "args": args},
+            f"{check.get('fn')}() returns")
+    elif wtype == "param-playground":
+        params = widget.get("params") or []
+        defaults = {p["id"]: p.get("default") for p in params}
+        view = widget.get("view") or {}
+        add({"op": "call", "fn": view.get("fn"),
+             "args": resolve_args(view.get("args"), defaults, "review", set(defaults), scratch)},
+            f"view at defaults {defaults}")
+        for r in widget.get("readouts") or []:
+            add({"op": "call", "fn": r.get("fn"),
+                 "args": resolve_args(r.get("args"), defaults, "review", set(defaults), scratch)},
+                f"readout {r.get('label', r.get('fn'))} at defaults")
+    elif wtype == "step-sim":
+        init, step = widget.get("init") or {}, widget.get("step") or {}
+        add({"op": "call", "fn": init.get("fn"),
+             "args": resolve_args(init.get("args"), {}, "review", set(), scratch)},
+            "initial state")
+        prior = 0
+        for i in range(int(widget.get("max_steps") or 0)):
+            add({"op": "call", "fn": step.get("fn"), "args": {"state": {"$ref": prior}}},
+                f"state after step {i + 1}")
+            prior = len(ops) - 1
+    else:
+        return "(nothing to run for this widget type; the exercise is checked by its own tests)"
+
+    if scratch.errors or not ops:
+        return "(the module's arguments could not be resolved, so nothing was run)"
+
+    source = model_source(curriculum, accepted + [module])
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(RUNNER)],
+            input=json.dumps({"source": source, "ops": ops,
+                              "packages": curriculum.get("packages") or []}),
+            capture_output=True, text=True, timeout=120)
+        out = json.loads(proc.stdout)
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, ValueError):
+        return "(the module's functions could not be run for this review)"
+    if not out.get("ok"):
+        return "(the module's functions could not be loaded for this review)"
+
+    lines = []
+    for label, res in zip(labels, out.get("results", [])):
+        if not res.get("ok"):
+            lines.append(f"- {label}: raised {res.get('error')}")
+        elif "flags" in res:
+            options = widget.get("options") or []
+            true_ids = [o.get("id") for o, flag in zip(options, res["flags"]) if flag]
+            lines.append(f"- {label}: {true_ids[0] if len(true_ids) == 1 else true_ids}")
+        else:
+            lines.append(f"- {label}: {json.dumps(res.get('result'))[:900]}")
+    return "\n".join(lines)
+
+
+REVIEW_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "findings": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "severity": {"type": "string", "enum": ["error", "warning"]},
+                    "claim": {"type": "string"},
+                    "problem": {"type": "string"},
+                    "fix": {"type": "string"},
+                },
+                "required": ["severity", "claim", "problem"],
+            },
+        },
+    },
+    "required": ["findings"],
+}
+
+
+def run_review(model: Model, curriculum: dict, module: BuiltModule,
+               accepted: list[BuiltModule], grounding: str = "") -> list:
+    """Ask a fresh context whether this module teaches anything false.
+
+    Returns verifier-shaped findings, so review defects flow into the same
+    repair loop as contract defects and are dropped the same way.
+    """
+    reply = model.complete(
+        stage="review",
+        system="You review one lesson module for factual defects. You return JSON only.",
+        prompt=_module_prompt(
+            "review.md", curriculum, module.spec, set(), grounding,
+            prose=module.prose,
+            widget=json.dumps(module.widget, indent=2),
+            functions="\n\n".join(fn["source"] for fn in module.functions),
+            facts=module_facts(curriculum, module, accepted)),
+        schema=REVIEW_SCHEMA,
+        model="claude-opus-5",
+    )
+    data = parse_json_reply(reply.text)
+    findings = []
+    for item in data.get("findings") or []:
+        severity = "ERROR" if item.get("severity") == "error" else "WARN"
+        detail = f"{item.get('problem', '')}".strip()
+        fix = item.get("fix")
+        findings.append((severity, f"{module.id}/review",
+                         f"reviewing {item.get('claim', '')!r}: {detail}"
+                         + (f" Suggested fix: {fix}" if fix else "")))
+    return findings
+
+
 # ------------------------------------------------------------------ the build
 
 
 def build(model: Model, topic: str, *, output_root: pathlib.Path,
-          grounding: str = "", on_event=lambda *_: None) -> BuildReport:
+          grounding: str = "", review: bool = False,
+          on_event=lambda *_: None) -> BuildReport:
     on_event("stage", "designing the curriculum")
     curriculum = run_curriculum(model, topic, grounding)
     slug = curriculum["slug"]
@@ -413,6 +556,21 @@ def build(model: Model, topic: str, *, output_root: pathlib.Path,
                                      report, on_event, accepted=built)
         if module is None:
             continue
+
+        if review:
+            findings = run_review(model, curriculum, module, built, grounding)
+            report.reviewed += 1
+            for severity, where, message in findings:
+                if severity == "WARN":
+                    report.review_warnings.append((where, message))
+            blocking = errors_only(findings)
+            if blocking:
+                on_event("stage", f"{spec['id']}: review raised {len(blocking)} objection(s)")
+                module = _repair_until_clean(model, curriculum, module, taken, grounding,
+                                             report, on_event, accepted=built,
+                                             extra=blocking)
+                if module is None:
+                    continue
 
         built.append(module)
         taken.update(fn["name"] for fn in module.functions)

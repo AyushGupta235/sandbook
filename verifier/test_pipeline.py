@@ -43,11 +43,12 @@ def check(condition: bool, message: str) -> None:
         raise Failure(message)
 
 
-def build_with(fixture: pathlib.Path, topic: str):
+def build_with(fixture: pathlib.Path, topic: str, review: bool = False):
     model = ScriptedModel.from_file(fixture)
     with tempfile.TemporaryDirectory() as tmp:
         out = pathlib.Path(tmp)
-        report = pipeline.build(model, topic, output_root=out, on_event=lambda *_: None)
+        report = pipeline.build(model, topic, output_root=out, review=review,
+                                on_event=lambda *_: None)
         findings = None
         if report.path is not None:
             findings = verify_lesson(report.slug, lessons_dir=out)
@@ -176,10 +177,80 @@ def case_malformed_reply_is_retried() -> str:
     return "a malformed first reply was rebuilt rather than dropped"
 
 
+def _sim_module(prose: str, prefix: str) -> dict:
+    return {
+        "prose": prose,
+        "widget": {"type": "step-sim", "title": "t", "max_steps": 2,
+                   "init": {"fn": f"{prefix}_init", "args": {}},
+                   "step": {"fn": f"{prefix}_step", "args": {"state": {"state": True}}},
+                   "view": {"fn": f"{prefix}_view", "args": {"state": {"state": True}}}},
+        "functions": [
+            {"name": f"{prefix}_init", "source": f'def {prefix}_init():\n'
+                                                 '    return {"t": 0, "done": False}'},
+            {"name": f"{prefix}_step", "source": f'def {prefix}_step(state):\n'
+                                                 '    s = dict(state)\n    s["t"] += 1\n'
+                                                 '    s["done"] = s["t"] >= 2\n    return s'},
+            {"name": f"{prefix}_view", "source": f'def {prefix}_view(state):\n'
+                                                 '    return {"kind": "scalars",\n'
+                                                 '        "items": [{"label": "t", "value": state["t"]}]}'},
+        ],
+    }
+
+
+def case_review_blocks_a_false_claim() -> str:
+    """A module that verifies cleanly but teaches something false.
+
+    Nothing in the contract can reject this: the widget renders, the simulation
+    terminates, every function runs. It is simply wrong, and only the review
+    pass has anything to say about it. The repaired version must ship.
+    """
+    wrong = _sim_module("Each step doubles the counter.", "rv")
+    right = _sim_module("Each step adds one to the counter.", "rv")
+    curriculum = {
+        "slug": "reviewed", "title": "Reviewed", "subtitle": "s", "packages": [],
+        "objectives": ["o"], "misconceptions": [{"claim": "c", "reality": "r"}],
+        "modules": [{"id": "only", "title": "Only", "widget_type": "step-sim",
+                     "intent": "i", "teaching_note": "n"}],
+    }
+    objection = {"findings": [{
+        "severity": "error",
+        "claim": "Each step doubles the counter.",
+        "problem": "The step function adds one. After two steps t is 2, not 4.",
+        "fix": "Say the counter increases by one each step.",
+    }]}
+    calls = [
+        {"stage": "curriculum", "system": "", "prompt": "", "reply": json.dumps(curriculum)},
+        {"stage": "module", "system": "", "prompt": "", "reply": json.dumps(wrong)},
+        {"stage": "review", "system": "", "prompt": "", "reply": json.dumps(objection)},
+        {"stage": "repair", "system": "", "prompt": "", "reply": json.dumps(right)},
+        {"stage": "review", "system": "", "prompt": "", "reply": json.dumps({"findings": []})},
+    ]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        fixture = pathlib.Path(tmp) / "reviewed.json"
+        fixture.write_text(json.dumps({"calls": calls}))
+        no_review, _, _, plain_doc, _ = build_with(fixture, "a topic with a false claim")
+        fixture.write_text(json.dumps({"calls": calls}))
+        report, findings, _, document, _ = build_with(fixture, "a topic with a false claim",
+                                                      review=True)
+
+    # Without review the false claim ships, which is the point of the case.
+    check(no_review.ok and "doubles" in plain_doc["modules"][0]["prose"],
+          "the control build should have shipped the false claim untouched")
+
+    check(report.ok, f"the repaired module should have shipped: {report.dropped}")
+    check(report.reviewed == 1, f"expected one module reviewed, got {report.reviewed}")
+    prose = document["modules"][0]["prose"]
+    check("adds one" in prose, f"the shipped prose is still the wrong one: {prose!r}")
+    check(findings is not None and findings.errors == 0, "the shipped lesson does not verify")
+    return "a false claim the contract cannot see was caught, repaired, and shipped correct"
+
+
 CASES = [
     ("token-bucket: repair and fail-closed drop", case_token_bucket),
     ("nothing survives: writes nothing", case_nothing_survives),
     ("malformed reply: rebuilt, not dropped", case_malformed_reply_is_retried),
+    ("review: false claim blocked and repaired", case_review_blocks_a_false_claim),
 ]
 
 
