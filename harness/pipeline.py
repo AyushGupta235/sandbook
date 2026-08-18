@@ -29,6 +29,9 @@ from dataclasses import dataclass, field
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "verifier"))
 
+sys.path.insert(0, str(ROOT))
+
+import kernels  # noqa: E402
 from verify import verify_lesson  # noqa: E402
 from llm import Model, ModelAuthError, ModelError, parse_json_reply  # noqa: E402
 
@@ -152,6 +155,10 @@ def lesson_document(curriculum: dict, modules: list[BuiltModule]) -> dict:
             for m in modules
         ],
     }
+    claims = [{"fn": fn["name"], "kernel": fn["implements"]}
+              for m in modules for fn in m.functions if fn.get("implements")]
+    if claims:
+        doc["implements"] = claims
     if curriculum.get("targets"):
         doc["targets"] = curriculum["targets"]
     if curriculum.get("sources"):
@@ -250,6 +257,7 @@ def _module_prompt(template: str, curriculum: dict, spec: dict,
         intent=spec["intent"],
         teaching_note=spec["teaching_note"],
         taken_names=", ".join(sorted(taken)) or "(none yet)",
+        kernels=kernels.describe() or "  (none available)",
         grounding=grounding or "",
         **extra,
     )

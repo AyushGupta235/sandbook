@@ -158,6 +158,26 @@ directly. No throat-clearing openers, no "it's worth noting that", no summary
 paragraph restating what you just said, no marketing adjectives, and no
 enthusiasm the material has not earned.
 
+## Claiming a kernel
+
+Some primitives have a trusted implementation checked into this repo. If one of
+your functions computes one of them, say so:
+
+```
+{"name": "kv_bytes", "source": "def kv_bytes(...):\n    ...",
+ "implements": "kv_cache_bytes"}
+```
+
+Your function is then run against the kernel's own probe inputs and must agree
+with it everywhere. Claim a kernel only when your function genuinely computes
+that quantity, with the same argument names and the same return shape, which
+you can read off the kernel's signature. A claim you cannot meet fails the
+module; no claim at all costs you nothing.
+
+Available kernels:
+
+{kernels}
+
 ## Accuracy
 
 Compute anything you assert. If a caption or an explanation states a number,
