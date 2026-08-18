@@ -36,6 +36,9 @@ TRANSIENT_MARKERS = (
     "529", "overloaded", "rate limit", "rate_limit", "too many requests",
     "503", "502", "504", "timeout", "timed out", "connection reset",
     "temporarily", "try again",
+    # The laptop suspending mid-request truncates the response. Nothing to do
+    # with the lesson, and asking again once the machine is awake just works.
+    "went to sleep",
 )
 
 
