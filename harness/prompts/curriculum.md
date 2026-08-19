@@ -38,6 +38,9 @@ should do:
   insight is *which step gates which*: dependency graphs, apply order, rollout
   and startup sequences, protocol handshakes. Correctness is judged against
   declared constraints, so several orders can be right.
+- `bug-hunt`: the learner finds the wrong line in a listing that looks fine.
+  Use for off-by-one errors, inverted conditions, and the class of bug that
+  produces plausible numbers rather than a crash.
 - `code-cell`: the learner writes something real. Two flavours: Python code
   checked by hidden assertions, or a text artefact (YAML, HCL, a config) that a
   Python function parses and grades. Use when doing beats watching.

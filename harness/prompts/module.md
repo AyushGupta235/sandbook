@@ -130,6 +130,29 @@ satisfy every constraint it declares, and **the order the items are listed in
 must break at least one constraint**, so the exercise cannot be solved by
 clicking top to bottom. Never write the answer into the config.
 
+**bug-hunt**
+```
+{"type": "bug-hunt", "title": "...", "task": "...",
+ "code": "def f(...):\n    ...",
+ "tests": "assert ...",
+ "candidates": [{"id": "cmp", "line": 5, "label": "the comparison",
+                 "patch": "    ok = serving > floor"}],
+ "explanation": "..."}
+```
+The learner picks the line they think is wrong; the widget applies that line's
+`patch` and runs `tests`, so the answer is demonstrated rather than announced.
+`line` is 1-indexed into `code`, and a `patch` replaces exactly that one line.
+
+The verifier runs the same procedure: **`code` as written must fail the tests,
+and exactly one candidate's patch must make them pass.** Give the wrong
+candidates a patch identical to the line they replace, so choosing them changes
+nothing. Two candidates that both fix it is a rejection, and so is a listing
+that was never broken.
+
+Make the bug one that returns plausible values rather than crashing, and put
+the assertion message to work: it is what the learner reads when they guess
+wrong.
+
 **code-cell**, Python flavour
 ```
 {"type": "code-cell", "title": "...", "language": "python", "task": "...",

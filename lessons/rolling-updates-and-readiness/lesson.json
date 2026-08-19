@@ -50,15 +50,46 @@
         "title": "Sequence one pod replacement",
         "task": "A Deployment with maxUnavailable: 0 and maxSurge: 1 is updated. Order the events for replacing a single pod.",
         "items": [
-          {"id": "old-terminate", "label": "Old pod is terminated", "detail": "the controller sends SIGTERM"},
-          {"id": "probe-pass", "label": "New pod passes its readiness probe", "detail": "kubelet marks it Ready"},
-          {"id": "edit", "label": "Deployment spec is edited", "detail": "a new image tag is set"},
-          {"id": "endpoint-remove", "label": "Old pod leaves Service endpoints", "detail": "it stops receiving requests"},
-          {"id": "new-rs", "label": "New ReplicaSet is created", "detail": "scaled to 1"},
-          {"id": "endpoint-add", "label": "New pod joins Service endpoints", "detail": "it starts receiving requests"},
-          {"id": "surge-pod", "label": "Surge pod is scheduled and starts", "detail": "Running, not yet Ready"}
+          {
+            "id": "old-terminate",
+            "label": "Old pod is terminated",
+            "detail": "the controller sends SIGTERM"
+          },
+          {
+            "id": "probe-pass",
+            "label": "New pod passes its readiness probe",
+            "detail": "kubelet marks it Ready"
+          },
+          {
+            "id": "edit",
+            "label": "Deployment spec is edited",
+            "detail": "a new image tag is set"
+          },
+          {
+            "id": "endpoint-remove",
+            "label": "Old pod leaves Service endpoints",
+            "detail": "it stops receiving requests"
+          },
+          {
+            "id": "new-rs",
+            "label": "New ReplicaSet is created",
+            "detail": "scaled to 1"
+          },
+          {
+            "id": "endpoint-add",
+            "label": "New pod joins Service endpoints",
+            "detail": "it starts receiving requests"
+          },
+          {
+            "id": "surge-pod",
+            "label": "Surge pod is scheduled and starts",
+            "detail": "Running, not yet Ready"
+          }
         ],
-        "order": {"fn": "rollout_order", "args": {}},
+        "order": {
+          "fn": "rollout_order",
+          "args": {}
+        },
         "explanation": "The one that catches people: the old pod cannot be terminated until the new one is in endpoints, and it only enters endpoints once readiness passes. Readiness is the gate the whole rollout hangs on."
       }
     },
@@ -70,16 +101,52 @@
         "type": "param-playground",
         "title": "Surge and unavailability",
         "params": [
-          {"id": "replicas", "label": "Replicas", "kind": "range", "min": 1, "max": 20, "step": 1, "default": 10, "format": "d", "unit": " pods"},
-          {"id": "max_surge", "label": "maxSurge", "kind": "range", "min": 0, "max": 5, "step": 1, "default": 1, "format": "d", "unit": " pods"},
-          {"id": "max_unavailable", "label": "maxUnavailable", "kind": "range", "min": 0, "max": 5, "step": 1, "default": 0, "format": "d", "unit": " pods"}
+          {
+            "id": "replicas",
+            "label": "Replicas",
+            "kind": "range",
+            "min": 1,
+            "max": 20,
+            "step": 1,
+            "default": 10,
+            "format": "d",
+            "unit": " pods"
+          },
+          {
+            "id": "max_surge",
+            "label": "maxSurge",
+            "kind": "range",
+            "min": 0,
+            "max": 5,
+            "step": 1,
+            "default": 1,
+            "format": "d",
+            "unit": " pods"
+          },
+          {
+            "id": "max_unavailable",
+            "label": "maxUnavailable",
+            "kind": "range",
+            "min": 0,
+            "max": 5,
+            "step": 1,
+            "default": 0,
+            "format": "d",
+            "unit": " pods"
+          }
         ],
         "view": {
           "fn": "rollout_capacity_view",
           "args": {
-            "replicas": {"param": "replicas"},
-            "max_surge": {"param": "max_surge"},
-            "max_unavailable": {"param": "max_unavailable"}
+            "replicas": {
+              "param": "replicas"
+            },
+            "max_surge": {
+              "param": "max_surge"
+            },
+            "max_unavailable": {
+              "param": "max_unavailable"
+            }
           }
         },
         "readouts": [
@@ -89,9 +156,15 @@
             "format": "d",
             "unit": " pods",
             "args": {
-              "replicas": {"param": "replicas"},
-              "max_surge": {"param": "max_surge"},
-              "max_unavailable": {"param": "max_unavailable"}
+              "replicas": {
+                "param": "replicas"
+              },
+              "max_surge": {
+                "param": "max_surge"
+              },
+              "max_unavailable": {
+                "param": "max_unavailable"
+              }
             }
           },
           {
@@ -100,12 +173,51 @@
             "format": "d",
             "unit": " pods",
             "args": {
-              "replicas": {"param": "replicas"},
-              "max_surge": {"param": "max_surge"},
-              "max_unavailable": {"param": "max_unavailable"}
+              "replicas": {
+                "param": "replicas"
+              },
+              "max_surge": {
+                "param": "max_surge"
+              },
+              "max_unavailable": {
+                "param": "max_unavailable"
+              }
             }
           }
         ]
+      }
+    },
+    {
+      "id": "bug",
+      "title": "Find the Line That Stalls It",
+      "prose": "Here is the controller's safety check, simplified: given the replica count, the unavailability budget, and how many pods are terminating or not yet ready, decide whether another pod may be taken down.\n\nOne line is wrong. The bug does not crash anything and the function returns sensible-looking numbers; it just makes the controller willing to break its own guarantee in one specific case.\n\nClick the line you think is wrong. Your fix gets applied and the tests run, so you will see whether it was.",
+      "widget": {
+        "type": "bug-hunt",
+        "title": "One line breaks the availability guarantee",
+        "task": "Pick the line whose fix makes the tests pass.",
+        "code": "def pods_available(replicas, max_unavailable, terminating, not_ready):\n    \"\"\"How many pods are actually serving, and whether we may kill another.\"\"\"\n    floor = replicas - max_unavailable\n    serving = replicas - terminating - not_ready\n    may_terminate = serving >= floor\n    return {\n        \"serving\": serving,\n        \"floor\": floor,\n        \"may_terminate\": may_terminate,\n    }",
+        "tests": "# maxUnavailable 0: the floor is the full replica count, so with every pod\n# serving we are exactly at the floor and may not remove one.\nr = pods_available(10, 0, 0, 0)\nassert r[\"floor\"] == 10, f\"floor should be 10, got {r['floor']}\"\nassert r[\"serving\"] == 10, f\"serving should be 10, got {r['serving']}\"\nassert r[\"may_terminate\"] is False, (\n    \"with maxUnavailable=0 and 10 of 10 serving, terminating a pod would drop \"\n    \"capacity below the floor, so this must be False\"\n)\n\n# One pod is already not ready, so we are below the floor and certainly\n# may not remove another.\nr = pods_available(10, 0, 0, 1)\nassert r[\"may_terminate\"] is False, \"already below the floor; must not terminate\"\n\n# With a budget of 2 and everything serving, there is room to take one down.\nr = pods_available(10, 2, 0, 0)\nassert r[\"may_terminate\"] is True, (\n    \"floor is 8 and 10 are serving, so one may be terminated\"\n)\n\n# Right at the floor with a budget: no further removals.\nr = pods_available(10, 2, 2, 0)\nassert r[\"serving\"] == 8, f\"serving should be 8, got {r['serving']}\"\nassert r[\"may_terminate\"] is False, \"at the floor exactly; must not go lower\"\n\nprint(\"all rollout-safety checks passed\")",
+        "candidates": [
+          {
+            "id": "floor",
+            "line": 3,
+            "label": "the floor calculation",
+            "patch": "    floor = replicas - max_unavailable"
+          },
+          {
+            "id": "serving",
+            "line": 4,
+            "label": "the serving count",
+            "patch": "    serving = replicas - terminating - not_ready"
+          },
+          {
+            "id": "compare",
+            "line": 5,
+            "label": "the comparison",
+            "patch": "    may_terminate = serving > floor"
+          }
+        ],
+        "explanation": "The comparison was `serving >= floor`. At exactly the floor that says yes, and taking a pod down then puts the deployment below the guarantee it just promised. With maxUnavailable=0 the floor equals the replica count, so the off-by-one is not a rare edge case: it is every single step of the rollout."
       }
     },
     {
@@ -138,8 +250,14 @@
             "predicate": "result['updated_pods'] == 0"
           }
         ],
-        "check": {"fn": "stuck_rollout_facts", "args": {}},
-        "view": {"fn": "stuck_rollout_view", "args": {}},
+        "check": {
+          "fn": "stuck_rollout_facts",
+          "args": {}
+        },
+        "view": {
+          "fn": "stuck_rollout_view",
+          "args": {}
+        },
         "explanation": "With maxUnavailable at 0 the controller may not terminate an old pod until a new one is available, and the new one never becomes available. So all 10 old pods keep serving, every request succeeds, and the rollout sits at zero progress. This is the failure mode worth internalising: nothing is down, no alert fires, and nothing you wrote is running."
       }
     }

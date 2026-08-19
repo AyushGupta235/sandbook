@@ -35,7 +35,7 @@ RUNNER = ROOT / "verifier" / "runner.py"
 TIMEOUT_S = 120
 
 WIDGET_TYPES = {"param-playground", "predict-reveal", "step-sim", "code-cell",
-                "order-build"}
+                "order-build", "bug-hunt"}
 VIEW_KINDS = {"bars", "lines", "grid", "scalars", "text", "stack"}
 
 # House style, enforced rather than requested. The prompts ask for this too, but
@@ -408,6 +408,52 @@ def verify_lesson(slug: str, lessons_dir: pathlib.Path | None = None) -> Finding
                             "args": resolve_args(v.get("args"), {}, where, set(), f)})
                 plan.append({"kind": "view", "where": f"{where} reveal view"})
 
+        elif wtype == "bug-hunt":
+            code = widget.get("code")
+            tests = widget.get("tests")
+            candidates = widget.get("candidates") or []
+            if not isinstance(code, str) or not code.strip():
+                f.error(where, "bug-hunt needs a 'code' listing")
+                continue
+            if not isinstance(tests, str) or not tests.strip():
+                f.error(where, "bug-hunt needs hidden 'tests'; without them nothing "
+                               "decides which line is wrong")
+                continue
+            if len(candidates) < 2:
+                f.error(where, "bug-hunt needs at least two candidate lines, or there is "
+                               "nothing to choose between")
+                continue
+            for key in ("correct", "answer", "buggy_line"):
+                if key in widget:
+                    f.error(where, f"bug-hunt must not assert an answer via {key!r}; the "
+                                   "right line is the one whose patch makes the tests pass")
+            n_lines = len(code.split("\n"))
+            bad_lines = [c.get("line") for c in candidates
+                         if not isinstance(c.get("line"), int)
+                         or not (1 <= c["line"] <= n_lines)]
+            if bad_lines:
+                f.error(where, f"candidate line(s) {bad_lines} are outside the "
+                               f"{n_lines}-line listing")
+                continue
+            if len({c["line"] for c in candidates}) != len(candidates):
+                f.error(where, "two candidates point at the same line")
+                continue
+            if any(not isinstance(c.get("patch"), str) for c in candidates):
+                f.error(where, "every candidate needs a 'patch': the replacement for its line")
+                continue
+
+            # The listing as shipped must be broken, and exactly one candidate
+            # patch must repair it. Both facts are settled by running the tests.
+            ops.append({"op": "exec", "code": code, "tests": tests})
+            plan.append({"kind": "bug-original", "where": where})
+            for c in candidates:
+                lines = code.split("\n")
+                lines[c["line"] - 1] = c["patch"]
+                ops.append({"op": "exec", "code": "\n".join(lines), "tests": tests})
+                plan.append({"kind": "bug-candidate", "where": where,
+                             "widget": where, "id": c.get("id", str(c["line"])),
+                             "line": c["line"], "total": len(candidates)})
+
         elif wtype == "order-build":
             items = widget.get("items") or []
             order = widget.get("order") or {}
@@ -537,6 +583,7 @@ def verify_lesson(slug: str, lessons_dir: pathlib.Path | None = None) -> Finding
 
     # ---- interpret ---------------------------------------------------------
     sim_done: dict[str, int] = {}
+    fixes: dict[str, list[tuple[str, int, bool]]] = {}
 
     for meta, res in zip(plan, out.get("results", [])):
         where = meta["where"]
@@ -582,6 +629,15 @@ def verify_lesson(slug: str, lessons_dir: pathlib.Path | None = None) -> Finding
             state = res.get("result")
             if isinstance(state, dict) and state.get("done") and meta["widget"] not in sim_done:
                 sim_done[meta["widget"]] = meta["index"]
+
+        elif kind == "bug-original":
+            if res.get("ok"):
+                f.error(where, "the code as shipped already passes its own tests, so there "
+                               "is no bug to find")
+
+        elif kind == "bug-candidate":
+            fixes.setdefault(meta["widget"], []).append(
+                (meta["id"], meta["line"], bool(res.get("ok"))))
 
         elif kind == "ordering":
             result = res.get("result")
@@ -667,6 +723,16 @@ def verify_lesson(slug: str, lessons_dir: pathlib.Path | None = None) -> Finding
                         isinstance(d, dict) and d.get("ok") is False for d in details):
                     f.error(where, "grader rejects the starter but every individual check reports "
                                    "ok, so the learner is given no indication of what is wrong")
+
+    for widget_where, results in fixes.items():
+        working = [(cid, line) for cid, line, ok in results if ok]
+        if not working:
+            f.error(widget_where, "no candidate line fixes the tests, so the exercise has "
+                                  "no right answer and the learner cannot win")
+        elif len(working) > 1:
+            f.error(widget_where, f"{len(working)} different lines each fix the tests "
+                                  f"({working}); a learner who picks either is right and "
+                                  "the module teaches nothing about which line was wrong")
 
     for p in plan:
         if p["kind"] == "sim-step" and p["index"] == p["max_steps"]:

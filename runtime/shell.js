@@ -12,6 +12,7 @@ import * as predictReveal from "./widgets/predict-reveal.js";
 import * as stepSim from "./widgets/step-sim.js";
 import * as codeCell from "./widgets/code-cell.js";
 import * as orderBuild from "./widgets/order-build.js";
+import * as bugHunt from "./widgets/bug-hunt.js";
 
 const WIDGETS = {
   "param-playground": paramPlayground,
@@ -19,6 +20,7 @@ const WIDGETS = {
   "step-sim": stepSim,
   "code-cell": codeCell,
   "order-build": orderBuild,
+  "bug-hunt": bugHunt,
 };
 
 // Lessons live in ../lessons; freshly generated drafts live in ../output and

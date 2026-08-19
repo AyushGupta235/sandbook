@@ -291,8 +291,60 @@ def mut_order_asserted_answer(lesson, model):
     return lesson, model
 
 
+# --------------------------------------------------- mutations: bug-hunt --
+
+
+def mut_bug_already_fixed(lesson, model):
+    """Ship the corrected code, so there is no bug to find."""
+    w = find_widget(lesson, "bug-hunt")
+    w["code"] = w["code"].replace("serving >= floor", "serving > floor")
+    return lesson, model
+
+
+def mut_bug_two_lines_work(lesson, model):
+    """Make a second candidate fix the tests too.
+
+    Raising the floor by one compensates for the >= exactly, so both lines
+    'work' and a learner who picks either is right. It takes dropping the
+    assertion that pins the floor as well, which is the point: the exercise is
+    unambiguous only because the tests pin the values the wrong fix would move.
+    """
+    w = find_widget(lesson, "bug-hunt")
+    w["tests"] = "\n".join(l for l in w["tests"].split("\n") if 'r["floor"] == 10' not in l)
+    for c in w["candidates"]:
+        if c["id"] == "floor":
+            c["patch"] = "    floor = replicas - max_unavailable + 1"
+    return lesson, model
+
+
+def mut_bug_no_line_works(lesson, model):
+    """Break the one patch that fixed it, leaving the exercise unwinnable."""
+    w = find_widget(lesson, "bug-hunt")
+    for c in w["candidates"]:
+        if c["id"] == "compare":
+            c["patch"] = "    may_terminate = serving >= floor"
+    return lesson, model
+
+
+def mut_bug_line_out_of_range(lesson, model):
+    """Point a candidate past the end of the listing."""
+    find_widget(lesson, "bug-hunt")["candidates"][0]["line"] = 99
+    return lesson, model
+
+
+def mut_bug_asserted_answer(lesson, model):
+    """Write the answer into the config instead of deriving it."""
+    find_widget(lesson, "bug-hunt")["buggy_line"] = 5
+    return lesson, model
+
+
 SUITES = [
     (ORDER_LESSON, [
+        ("bug-hunt ships already fixed",   mut_bug_already_fixed,     "no bug to find"),
+        ("two lines both fix the tests",   mut_bug_two_lines_work,    "each fix the tests"),
+        ("no line fixes the tests",        mut_bug_no_line_works,     "no right answer"),
+        ("candidate line out of range",    mut_bug_line_out_of_range, "outside the"),
+        ("bug answer asserted, not derived", mut_bug_asserted_answer, "must not assert an answer"),
         ("steps already in a valid order", mut_order_already_solved,   "already listed in a valid order"),
         ("order breaks its own constraint", mut_order_contradicts_itself, "breaks its own constraint"),
         ("no constraints, any order passes", mut_order_unconstrained,  "declares no constraints"),

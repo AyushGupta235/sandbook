@@ -596,9 +596,64 @@ td.cell-recomputed { background: var(--bad-soft); color: var(--bad); }
 }
 .order-remove:hover { color: var(--text); }
 
+/* ------------------------------------------------------------- bug-hunt */
+
+.bug-listing {
+  margin: 12px 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface-2);
+}
+.bug-line {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  width: 100%;
+  padding: 3px 12px;
+  border: none;
+  border-left: 3px solid transparent;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+}
+.bug-line.selectable { cursor: pointer; }
+.bug-line.selectable:hover:not(:disabled) { background: var(--surface); }
+.bug-line.selectable .bug-code { color: var(--text); }
+.bug-line.picked { border-left-color: var(--accent); background: var(--accent-soft); }
+.bug-lineno {
+  min-width: 1.6em;
+  text-align: right;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 0.76rem;
+  user-select: none;
+}
+.bug-code {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  white-space: pre;
+  color: var(--text-dim);
+}
+.bug-output {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  white-space: pre-wrap;
+  color: var(--text-dim);
+  max-height: 220px;
+  overflow: auto;
+}
+
 @media (max-width: 620px) {
   .param { grid-template-columns: 1fr auto; }
   .param label { grid-column: 1 / -1; }
   .main { padding: 24px 15px 100px; }
   .order-columns { grid-template-columns: 1fr; }
+  .bug-listing { overflow-x: auto; }
 }
