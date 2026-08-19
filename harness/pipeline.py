@@ -18,6 +18,7 @@ name.
 
 from __future__ import annotations
 
+import ast
 import datetime
 import json
 import pathlib
@@ -583,6 +584,61 @@ REVIEW_SCHEMA = {
 }
 
 
+def widget_functions(widget: dict) -> list[str]:
+    """Every model function a widget names directly."""
+    names = []
+    for key in ("view", "check", "init", "step", "grade"):
+        fn = (widget.get(key) or {}).get("fn")
+        if fn:
+            names.append(fn)
+    for readout in widget.get("readouts") or []:
+        if readout.get("fn"):
+            names.append(readout["fn"])
+    return names
+
+
+def reachable_source(source: str, widget: dict) -> str:
+    """Just the functions this widget reaches, plus the imports they need.
+
+    Handing a reviewer the whole lesson's model.py makes it comment on code
+    belonging to other modules, so one real defect comes back several times
+    attributed to whichever module happened to be under review. Narrowing the
+    source to what this widget actually calls keeps a finding where it belongs.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return source
+
+    defs = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+    stack = [n for n in widget_functions(widget) if n in defs]
+    seen: set[str] = set()
+    while stack:
+        name = stack.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        for node in ast.walk(defs[name]):
+            if isinstance(node, ast.Name) and node.id in defs and node.id not in seen:
+                stack.append(node.id)
+    if not seen:
+        return source
+
+    lines = source.splitlines()
+
+    def segment(node) -> str:
+        return "\n".join(lines[node.lineno - 1:node.end_lineno])
+
+    # Imports and module-level constants come along whether or not they are
+    # referenced. Leaving a constant out makes the excerpt look like code that
+    # would raise NameError, and a reviewer reads that as a defect in the
+    # lesson rather than an artefact of how it was shown the source.
+    preamble = [segment(n) for n in tree.body
+                if isinstance(n, (ast.Import, ast.ImportFrom, ast.Assign, ast.AnnAssign))]
+    bodies = [segment(defs[n]) for n in sorted(seen, key=lambda n: defs[n].lineno)]
+    return "\n".join(preamble + [""] + bodies) if preamble else "\n\n".join(bodies)
+
+
 def review_lesson(model: Model, slug: str, lessons_dir: pathlib.Path,
                   grounding: str = "", on_event=lambda *_: None) -> list:
     """Review a lesson already on disk, module by module.
@@ -616,14 +672,17 @@ def review_lesson(model: Model, slug: str, lessons_dir: pathlib.Path,
                             widget=widget, functions=[])
         on_event("stage", f"reviewing {spec['id']}")
         try:
-            found = run_review(model, curriculum, built, [], grounding, source=source)
+            found = run_review(model, curriculum, built, [], grounding, source=source,
+                               shown=reachable_source(source, widget))
         except ModelAuthError:
             raise
         except ModelError as e:
             on_event("detail", f"{spec['id']}: the review itself failed ({e}); skipping it")
             continue
         for item in found:
-            on_event("detail" if item[0] == "WARN" else "drop", f"{item[1]}: {item[2][:150]}")
+            # Not truncated. A finding cut off mid-sentence cannot be judged,
+            # and judging them is the entire point of running this.
+            on_event("detail" if item[0] == "WARN" else "drop", f"{item[1]}: {item[2]}")
         if not found:
             on_event("ok", f"{spec['id']}: no findings")
         findings.extend(found)
@@ -632,7 +691,7 @@ def review_lesson(model: Model, slug: str, lessons_dir: pathlib.Path,
 
 def run_review(model: Model, curriculum: dict, module: BuiltModule,
                accepted: list[BuiltModule], grounding: str = "",
-               source: str | None = None) -> list:
+               source: str | None = None, shown: str | None = None) -> list:
     """Ask a fresh context whether this module teaches anything false.
 
     Returns verifier-shaped findings, so review defects flow into the same
@@ -645,7 +704,7 @@ def run_review(model: Model, curriculum: dict, module: BuiltModule,
             "review.md", curriculum, module.spec, set(), grounding,
             prose=module.prose,
             widget=json.dumps(module.widget, indent=2),
-            functions=source or "\n\n".join(fn["source"] for fn in module.functions),
+            functions=shown or source or "\n\n".join(fn["source"] for fn in module.functions),
             facts=module_facts(curriculum, module, accepted, source=source)),
         schema=REVIEW_SCHEMA,
         model="claude-opus-5",
