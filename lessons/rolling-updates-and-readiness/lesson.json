@@ -260,6 +260,169 @@
         },
         "explanation": "With maxUnavailable at 0 the controller may not terminate an old pod until a new one is available, and the new one never becomes available. So all 10 old pods keep serving, every request succeeds, and the rollout sits at zero progress. This is the failure mode worth internalising: nothing is down, no alert fires, and nothing you wrote is running."
       }
+    },
+    {
+      "id": "hunt",
+      "title": "Find a Setting That Works",
+      "prose": "Now make it work. The cluster has room for **15 pods in total**, and the requirement is that all 10 replicas keep serving throughout the rollout.\n\nThree things have to hold at once: the rollout must be able to start, the peak pod count must fit the cluster, and capacity must never dip. Settings that satisfy any two of them usually break the third.\n\nStart from the defaults, which fail for the most basic reason of all.",
+      "widget": {
+        "type": "param-hunt",
+        "title": "Safe and possible at the same time",
+        "task": "Find settings where the rollout starts, fits in 15 pods, and never drops below the desired replica count.",
+        "params": [
+          {
+            "id": "replicas",
+            "label": "Replicas",
+            "kind": "range",
+            "min": 1,
+            "max": 20,
+            "step": 1,
+            "default": 10,
+            "unit": " pods"
+          },
+          {
+            "id": "max_surge",
+            "label": "maxSurge",
+            "kind": "range",
+            "min": 0,
+            "max": 5,
+            "step": 1,
+            "default": 0,
+            "unit": " pods"
+          },
+          {
+            "id": "max_unavailable",
+            "label": "maxUnavailable",
+            "kind": "range",
+            "min": 0,
+            "max": 5,
+            "step": 1,
+            "default": 0,
+            "unit": " pods"
+          }
+        ],
+        "goal": {
+          "fn": "surge_headroom_goal",
+          "args": {
+            "replicas": {
+              "param": "replicas"
+            },
+            "max_surge": {
+              "param": "max_surge"
+            },
+            "max_unavailable": {
+              "param": "max_unavailable"
+            },
+            "node_capacity": {
+              "const": 15
+            }
+          }
+        },
+        "view": {
+          "fn": "surge_headroom_view",
+          "args": {
+            "replicas": {
+              "param": "replicas"
+            },
+            "max_surge": {
+              "param": "max_surge"
+            },
+            "max_unavailable": {
+              "param": "max_unavailable"
+            },
+            "node_capacity": {
+              "const": 15
+            }
+          }
+        },
+        "explanation": "Any surge above zero with maxUnavailable at zero satisfies all three, as long as the peak stays within 15. Surge buys availability with headroom, and headroom is the thing your cluster may not have."
+      }
+    },
+    {
+      "id": "duration",
+      "title": "How Long Will It Take",
+      "prose": "A wave of replacements runs as wide as the budgets allow, then waits for the new pods to pass readiness before the next wave starts. So the readiness delay is not paid once, it is paid per wave.\n\nWork this one out before you check it. **50 replicas**, `maxSurge: 2`, `maxUnavailable: 0`, and each new pod takes **15 seconds** to become ready.",
+      "widget": {
+        "type": "calc-widget",
+        "title": "Total rollout time",
+        "task": "How many seconds does the full rollout take?",
+        "prompt": "Total time",
+        "unit": " s",
+        "tolerance": 0,
+        "format": "d",
+        "answer": {
+          "fn": "rollout_duration_s",
+          "args": {
+            "replicas": {
+              "const": 50
+            },
+            "max_surge": {
+              "const": 2
+            },
+            "max_unavailable": {
+              "const": 0
+            },
+            "readiness_delay_s": {
+              "const": 15
+            }
+          }
+        },
+        "working": {
+          "fn": "rollout_duration_view",
+          "args": {
+            "replicas": {
+              "const": 50
+            },
+            "max_surge": {
+              "const": 2
+            },
+            "max_unavailable": {
+              "const": 0
+            },
+            "readiness_delay_s": {
+              "const": 15
+            }
+          }
+        },
+        "hints": [
+          "How many pods can be replaced in one wave, given the two budgets?",
+          "50 replicas at 2 per wave is 25 waves. Each wave waits for readiness."
+        ],
+        "explanation": "25 waves at 15 seconds each. The readiness delay multiplies by the wave count, which is why maxSurge: 1 on a large deployment turns a deploy into a coffee break."
+      }
+    },
+    {
+      "id": "fix",
+      "title": "Which Change Actually Fixes It",
+      "prose": "Here is the endpoint decision, and it is wrong: it puts any `Running` pod into the Service, which is how a pod that fails its readiness probe still receives traffic.\n\nThree changes are proposed. All three sound reasonable in a review comment. Pick the one that survives the tests.",
+      "widget": {
+        "type": "diff-apply",
+        "title": "Repair the endpoint rule",
+        "task": "Choose the change that makes every case correct.",
+        "code": "def ready_for_traffic(pod):\n    \"\"\"Should this pod be in the Service endpoints right now?\"\"\"\n    return pod[\"phase\"] == \"Running\"",
+        "tests": "cases = [\n    ({\"phase\": \"Running\", \"probe_passed\": True,  \"terminating\": False}, True,\n     \"a healthy pod that passes its probe should serve\"),\n    ({\"phase\": \"Running\", \"probe_passed\": False, \"terminating\": False}, False,\n     \"Running is not Ready: a failing readiness probe must keep it out of endpoints\"),\n    ({\"phase\": \"Pending\", \"probe_passed\": False, \"terminating\": False}, False,\n     \"a pod that has not started cannot serve\"),\n    ({\"phase\": \"Running\", \"probe_passed\": True,  \"terminating\": True}, False,\n     \"a terminating pod must leave endpoints before it stops accepting connections\"),\n    ({\"phase\": \"Pending\", \"probe_passed\": True,  \"terminating\": False}, False,\n     \"trusting the probe alone lets a pod that is not even Running take traffic\"),\n]\nfor pod, want, why in cases:\n    got = ready_for_traffic(pod)\n    assert got == want, f\"{why}: expected {want}, got {got} for {pod}\"\nprint(f\"{len(cases)} endpoint decisions correct\")",
+        "candidates": [
+          {
+            "id": "probe",
+            "label": "Also require the readiness probe to pass",
+            "detail": "Running and probe_passed",
+            "code": "def ready_for_traffic(pod):\n    \"\"\"Should this pod be in the Service endpoints right now?\"\"\"\n    return pod[\"phase\"] == \"Running\" and pod[\"probe_passed\"]"
+          },
+          {
+            "id": "full",
+            "label": "Require Running, a passing probe, and not terminating",
+            "detail": "all three conditions",
+            "code": "def ready_for_traffic(pod):\n    \"\"\"Should this pod be in the Service endpoints right now?\"\"\"\n    return (pod[\"phase\"] == \"Running\"\n            and pod[\"probe_passed\"]\n            and not pod[\"terminating\"])"
+          },
+          {
+            "id": "probe-only",
+            "label": "Trust the probe and skip the phase check",
+            "detail": "probe_passed and not terminating",
+            "code": "def ready_for_traffic(pod):\n    \"\"\"Should this pod be in the Service endpoints right now?\"\"\"\n    return pod[\"probe_passed\"] and not pod[\"terminating\"]"
+          }
+        ],
+        "explanation": "Readiness alone is not enough and neither is Running. A pod leaves endpoints the moment it starts terminating, which is what gives in-flight requests somewhere to finish, and the probe cannot be trusted on a pod that is not Running yet."
+      }
     }
   ]
 }

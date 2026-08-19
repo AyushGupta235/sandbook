@@ -35,7 +35,7 @@ RUNNER = ROOT / "verifier" / "runner.py"
 TIMEOUT_S = 120
 
 WIDGET_TYPES = {"param-playground", "predict-reveal", "step-sim", "code-cell",
-                "order-build", "bug-hunt"}
+                "order-build", "bug-hunt", "param-hunt", "calc-widget", "diff-apply"}
 VIEW_KINDS = {"bars", "lines", "grid", "scalars", "text", "stack"}
 
 # House style, enforced rather than requested. The prompts ask for this too, but
@@ -408,6 +408,78 @@ def verify_lesson(slug: str, lessons_dir: pathlib.Path | None = None) -> Finding
                             "args": resolve_args(v.get("args"), {}, where, set(), f)})
                 plan.append({"kind": "view", "where": f"{where} reveal view"})
 
+        elif wtype == "calc-widget":
+            answer = widget.get("answer") or {}
+            if not answer.get("fn"):
+                f.error(where, "calc-widget needs answer.fn; the expected value is computed, "
+                               "not written into the config")
+                continue
+            for key in ("value", "expected", "correct"):
+                if key in widget:
+                    f.error(where, f"calc-widget must not assert the answer via {key!r}")
+            tol = widget.get("tolerance", 1e-6)
+            if not is_num(tol) or tol < 0:
+                f.error(where, f"tolerance must be a non-negative number, got {tol!r}")
+            ops.append({"op": "call", "fn": answer["fn"],
+                        "args": resolve_args(answer.get("args"), {}, where, set(), f)})
+            plan.append({"kind": "calc-answer", "where": where})
+            if (widget.get("working") or {}).get("fn"):
+                w = widget["working"]
+                ops.append({"op": "call", "fn": w["fn"],
+                            "args": resolve_args(w.get("args"), {}, where, set(), f)})
+                plan.append({"kind": "view", "where": f"{where} working"})
+
+        elif wtype == "param-hunt":
+            params = widget.get("params") or []
+            declared = check_params(params, where, f)
+            goal = widget.get("goal") or {}
+            if not goal.get("fn"):
+                f.error(where, "param-hunt needs goal.fn; whether the goal is met is decided "
+                               "by running it, not by the config")
+                continue
+            defaults = {p["id"]: p.get("default") for p in params}
+            ops.append({"op": "call", "fn": goal["fn"],
+                        "args": resolve_args(goal.get("args"), defaults, where, declared, f)})
+            plan.append({"kind": "hunt-default", "where": where, "widget": where})
+            # Somewhere in the space the goal has to be reachable, or the
+            # learner is being asked to find something that is not there.
+            for combo in param_corners(params):
+                ops.append({"op": "call", "fn": goal["fn"],
+                            "args": resolve_args(goal.get("args"), combo, where, declared, f)})
+                plan.append({"kind": "hunt-corner", "where": f"{where} @{combo}",
+                             "widget": where})
+            if (widget.get("view") or {}).get("fn"):
+                v = widget["view"]
+                for combo in param_corners(params):
+                    ops.append({"op": "call", "fn": v["fn"],
+                                "args": resolve_args(v.get("args"), combo, where, declared, f)})
+                    plan.append({"kind": "view", "where": f"{where} view@{combo}"})
+
+        elif wtype == "diff-apply":
+            code = widget.get("code")
+            tests = widget.get("tests")
+            candidates = widget.get("candidates") or []
+            if not isinstance(code, str) or not isinstance(tests, str) or not tests.strip():
+                f.error(where, "diff-apply needs 'code' and hidden 'tests'")
+                continue
+            if len(candidates) < 2:
+                f.error(where, "diff-apply needs at least two candidate changes")
+                continue
+            for key in ("correct", "answer"):
+                if key in widget:
+                    f.error(where, f"diff-apply must not assert an answer via {key!r}")
+            if any(not isinstance(c.get("code"), str) or not c["code"].strip()
+                   for c in candidates):
+                f.error(where, "every candidate needs a 'code': the whole listing as it "
+                               "would be after the change")
+                continue
+            ops.append({"op": "exec", "code": code, "tests": tests})
+            plan.append({"kind": "bug-original", "where": where})
+            for c in candidates:
+                ops.append({"op": "exec", "code": c["code"], "tests": tests})
+                plan.append({"kind": "bug-candidate", "where": where, "widget": where,
+                             "id": c.get("id", "?"), "line": 0, "total": len(candidates)})
+
         elif wtype == "bug-hunt":
             code = widget.get("code")
             tests = widget.get("tests")
@@ -584,6 +656,7 @@ def verify_lesson(slug: str, lessons_dir: pathlib.Path | None = None) -> Finding
     # ---- interpret ---------------------------------------------------------
     sim_done: dict[str, int] = {}
     fixes: dict[str, list[tuple[str, int, bool]]] = {}
+    reachable: set[str] = set()
 
     for meta, res in zip(plan, out.get("results", [])):
         where = meta["where"]
@@ -629,6 +702,24 @@ def verify_lesson(slug: str, lessons_dir: pathlib.Path | None = None) -> Finding
             state = res.get("result")
             if isinstance(state, dict) and state.get("done") and meta["widget"] not in sim_done:
                 sim_done[meta["widget"]] = meta["index"]
+
+        elif kind == "calc-answer":
+            v = res.get("result")
+            if not is_num(v):
+                f.error(where, f"the answer function returned {v!r}, which is not a finite "
+                               "number, so nothing can be marked right or wrong")
+
+        elif kind in ("hunt-default", "hunt-corner"):
+            result = res.get("result")
+            if not isinstance(result, dict) or not isinstance(result.get("met"), bool):
+                f.error(where, "goal.fn must return an object with a boolean 'met'")
+                continue
+            if kind == "hunt-default":
+                if result["met"]:
+                    f.error(meta["widget"], "the goal is already met at the default settings, "
+                                            "so the learner has nothing to find")
+            elif result["met"]:
+                reachable.add(meta["widget"])
 
         elif kind == "bug-original":
             if res.get("ok"):
@@ -723,6 +814,11 @@ def verify_lesson(slug: str, lessons_dir: pathlib.Path | None = None) -> Finding
                         isinstance(d, dict) and d.get("ok") is False for d in details):
                     f.error(where, "grader rejects the starter but every individual check reports "
                                    "ok, so the learner is given no indication of what is wrong")
+
+    for p in plan:
+        if p["kind"] == "hunt-default" and p["widget"] not in reachable:
+            f.error(p["widget"], "no corner of the parameter space meets the goal, so the "
+                                 "learner is being asked to find something that is not there")
 
     for widget_where, results in fixes.items():
         working = [(cid, line) for cid, line, ok in results if ok]

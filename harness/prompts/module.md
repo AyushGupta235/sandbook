@@ -130,6 +130,40 @@ satisfy every constraint it declares, and **the order the items are listed in
 must break at least one constraint**, so the exercise cannot be solved by
 clicking top to bottom. Never write the answer into the config.
 
+**param-hunt**
+```
+{"type": "param-hunt", "title": "...", "task": "...",
+ "params": [ ... same shape as param-playground ... ],
+ "goal": {"fn": "surge_goal", "args": {...}},
+ "view": {"fn": "..._view", "args": {...}},
+ "explanation": "..."}
+```
+Like a param-playground, but the learner is asked to *achieve* something rather
+than to look. `goal.fn` returns `{"met": bool, "message": str, "detail": str}`,
+and its message is the whole teaching surface: say which requirement is failing
+and by how much, not just "no".
+
+The verifier requires the goal to be **unmet at the default settings** and met
+at some corner of the space, so the exercise ships neither already solved nor
+impossible. Aim for a goal with two or three requirements that pull against each
+other, so satisfying one naively breaks another.
+
+**calc-widget**
+```
+{"type": "calc-widget", "title": "...", "task": "...", "prompt": "Total time",
+ "unit": " s", "tolerance": 0, "format": "d",
+ "answer": {"fn": "duration_s", "args": {...}},
+ "working": {"fn": "..._view", "args": {...}},
+ "hints": ["...", "..."], "explanation": "..."}
+```
+The learner works a number out by hand. `answer.fn` computes the expected value,
+so the config never states it. `tolerance` is absolute for small numbers and
+relative for large ones; use 0 for exact integer answers. `working` is revealed
+only once they are right, so it can show the derivation.
+
+Hints are consumed in order as attempts are made, so make the first a nudge and
+the last close to a walkthrough.
+
 **bug-hunt**
 ```
 {"type": "bug-hunt", "title": "...", "task": "...",
@@ -152,6 +186,22 @@ that was never broken.
 Make the bug one that returns plausible values rather than crashing, and put
 the assertion message to work: it is what the learner reads when they guess
 wrong.
+
+**diff-apply**
+```
+{"type": "diff-apply", "title": "...", "task": "...",
+ "code": "the listing as it stands",
+ "tests": "assert ...",
+ "candidates": [{"id": "full", "label": "...", "detail": "...", "code": "the whole listing after this change"}],
+ "explanation": "..."}
+```
+Same contract as bug-hunt, different question: not *where* the defect is but
+*which repair holds up*. Each candidate carries the complete listing as it would
+be after the change, so a fix may touch several lines.
+
+The verifier requires `code` to fail the tests and exactly one candidate to pass
+them. Make every wrong candidate something a reasonable person would suggest in
+a code review, and make it wrong for a reason the tests can show.
 
 **code-cell**, Python flavour
 ```

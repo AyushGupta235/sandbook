@@ -13,6 +13,9 @@ import * as stepSim from "./widgets/step-sim.js";
 import * as codeCell from "./widgets/code-cell.js";
 import * as orderBuild from "./widgets/order-build.js";
 import * as bugHunt from "./widgets/bug-hunt.js";
+import * as paramHunt from "./widgets/param-hunt.js";
+import * as calcWidget from "./widgets/calc-widget.js";
+import * as diffApply from "./widgets/diff-apply.js";
 
 const WIDGETS = {
   "param-playground": paramPlayground,
@@ -21,6 +24,9 @@ const WIDGETS = {
   "code-cell": codeCell,
   "order-build": orderBuild,
   "bug-hunt": bugHunt,
+  "param-hunt": paramHunt,
+  "calc-widget": calcWidget,
+  "diff-apply": diffApply,
 };
 
 // Lessons live in ../lessons; freshly generated drafts live in ../output and

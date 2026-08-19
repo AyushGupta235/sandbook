@@ -38,9 +38,17 @@ should do:
   insight is *which step gates which*: dependency graphs, apply order, rollout
   and startup sequences, protocol handshakes. Correctness is judged against
   declared constraints, so several orders can be right.
+- `param-hunt`: the learner has to *achieve* something with the controls, not
+  just observe. Use when a setting has to satisfy competing requirements at
+  once, so satisfying one naively breaks another.
+- `calc-widget`: the learner works a number out by hand before seeing it. Use
+  when the arithmetic itself is the lesson and getting it wrong is instructive.
 - `bug-hunt`: the learner finds the wrong line in a listing that looks fine.
   Use for off-by-one errors, inverted conditions, and the class of bug that
   produces plausible numbers rather than a crash.
+- `diff-apply`: the learner picks which of several plausible repairs actually
+  holds up. Use when knowing *where* the problem is does not tell you how to
+  fix it.
 - `code-cell`: the learner writes something real. Two flavours: Python code
   checked by hidden assertions, or a text artefact (YAML, HCL, a config) that a
   Python function parses and grades. Use when doing beats watching.

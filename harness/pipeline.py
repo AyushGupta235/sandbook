@@ -43,7 +43,7 @@ MAX_REPAIR_ROUNDS = 3
 MODULE_BUILD_ATTEMPTS = 2   # a reply in the wrong shape earns one more ask
 
 WIDGET_TYPES = {"param-playground", "predict-reveal", "step-sim", "code-cell",
-                "order-build", "bug-hunt"}
+                "order-build", "bug-hunt", "param-hunt", "calc-widget", "diff-apply"}
 
 
 # ----------------------------------------------------------------- rendering

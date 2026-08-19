@@ -338,8 +338,83 @@ def mut_bug_asserted_answer(lesson, model):
     return lesson, model
 
 
+# ------------------------------- mutations: param-hunt, calc, diff-apply --
+
+
+def mut_hunt_already_met(lesson, model):
+    """Start the learner at a setting that already satisfies the goal."""
+    return lesson, model + (
+        "\n\ndef surge_headroom_goal(replicas, max_surge, max_unavailable, node_capacity):\n"
+        "    return {'met': True, 'message': 'fine', 'detail': ''}\n"
+    )
+
+
+def mut_hunt_unreachable(lesson, model):
+    """A goal no setting can satisfy, so the learner hunts for nothing."""
+    return lesson, model + (
+        "\n\ndef surge_headroom_goal(replicas, max_surge, max_unavailable, node_capacity):\n"
+        "    return {'met': False, 'message': 'never', 'detail': ''}\n"
+    )
+
+
+def mut_hunt_wrong_shape(lesson, model):
+    """A goal function that does not say whether the goal was met."""
+    return lesson, model + (
+        "\n\ndef surge_headroom_goal(replicas, max_surge, max_unavailable, node_capacity):\n"
+        "    return {'message': 'no verdict'}\n"
+    )
+
+
+def mut_calc_not_a_number(lesson, model):
+    """An answer function that returns something unscoreable."""
+    return lesson, model + (
+        "\n\ndef rollout_duration_s(replicas, max_surge, max_unavailable, readiness_delay_s):\n"
+        "    return 'about six minutes'\n"
+    )
+
+
+def mut_calc_asserted(lesson, model):
+    """Write the expected value into the config instead of computing it."""
+    find_widget(lesson, "calc-widget")["expected"] = 375
+    return lesson, model
+
+
+def mut_diff_already_correct(lesson, model):
+    """Ship the fixed listing, so there is nothing to repair."""
+    w = find_widget(lesson, "diff-apply")
+    w["code"] = next(c["code"] for c in w["candidates"] if c["id"] == "full")
+    return lesson, model
+
+
+def mut_diff_two_fixes(lesson, model):
+    """Make a second candidate correct as well."""
+    w = find_widget(lesson, "diff-apply")
+    full = next(c["code"] for c in w["candidates"] if c["id"] == "full")
+    for c in w["candidates"]:
+        if c["id"] == "probe-only":
+            c["code"] = full
+    return lesson, model
+
+
+def mut_diff_none_fix(lesson, model):
+    """Break the one candidate that worked."""
+    w = find_widget(lesson, "diff-apply")
+    for c in w["candidates"]:
+        if c["id"] == "full":
+            c["code"] = c["code"].replace("and not pod[\"terminating\"]", "")
+    return lesson, model
+
+
 SUITES = [
     (ORDER_LESSON, [
+        ("goal already met at defaults",   mut_hunt_already_met,      "already met at the default"),
+        ("goal met nowhere in the space",  mut_hunt_unreachable,      "not there"),
+        ("goal returns no verdict",        mut_hunt_wrong_shape,      "boolean 'met'"),
+        ("calc answer is not a number",    mut_calc_not_a_number,     "not a finite number"),
+        ("calc answer asserted in config", mut_calc_asserted,         "must not assert"),
+        ("diff-apply ships already fixed", mut_diff_already_correct,  "no bug to find"),
+        ("two changes both work",          mut_diff_two_fixes,        "each fix the tests"),
+        ("no change works",                mut_diff_none_fix,         "no right answer"),
         ("bug-hunt ships already fixed",   mut_bug_already_fixed,     "no bug to find"),
         ("two lines both fix the tests",   mut_bug_two_lines_work,    "each fix the tests"),
         ("no line fixes the tests",        mut_bug_no_line_works,     "no right answer"),

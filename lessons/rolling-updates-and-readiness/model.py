@@ -172,3 +172,95 @@ def stuck_rollout_view():
             },
         ],
     }
+
+
+# ------------------------------------------------------- surge headroom hunt
+
+
+def surge_headroom_goal(replicas, max_surge, max_unavailable, node_capacity):
+    """Is this rollout both safe and possible on a cluster this size?
+
+    Three things have to hold at once, and the settings that satisfy any two of
+    them usually break the third. That tension is the exercise.
+    """
+    c = rollout_capacity(replicas, max_surge, max_unavailable)
+    node_capacity = int(node_capacity)
+
+    fits = c["max_total"] <= node_capacity
+    no_dip = c["min_available"] >= replicas
+    progresses = c["can_progress"]
+
+    if not progresses:
+        return {"met": False,
+                "message": "This rollout cannot start.",
+                "detail": ("With surge 0 and unavailable 0 the controller may neither add a "
+                           "pod nor remove one, so it never takes a first step.")}
+    if not fits:
+        return {"met": False,
+                "message": f"Needs room for {c['max_total']} pods, cluster holds {node_capacity}.",
+                "detail": ("The surge pod has nowhere to be scheduled, so it sits Pending and "
+                           "the rollout waits on it.")}
+    if not no_dip:
+        return {"met": False,
+                "message": f"Capacity dips to {c['min_available']} of {replicas} during the rollout.",
+                "detail": ("Allowed, but this lesson's requirement is that every replica keeps "
+                           "serving throughout.")}
+    return {"met": True,
+            "message": f"Never below {replicas} serving, peaks at {c['max_total']}, fits in {node_capacity}.",
+            "detail": "Surge without unavailability, and the cluster has room for the extra pod."}
+
+
+def surge_headroom_view(replicas, max_surge, max_unavailable, node_capacity):
+    c = rollout_capacity(replicas, max_surge, max_unavailable)
+    return {
+        "kind": "bars",
+        "labels": ["Guaranteed serving", "Desired", "Peak pods", "Cluster capacity"],
+        "values": [c["min_available"], int(replicas), c["max_total"], int(node_capacity)],
+        "y_label": "pods",
+        "value_format": "d",
+        "highlight": [2, 3],
+        "caption": ("Peak pods must fit under cluster capacity, and guaranteed serving must "
+                    "reach the desired count. Both bars have to land in the right place."),
+    }
+
+
+# -------------------------------------------------------- how long it takes
+
+
+def rollout_batches(replicas, max_surge, max_unavailable):
+    """How many sequential waves a rollout takes, and its total wall time.
+
+    Each wave replaces as many pods as the two budgets allow at once. This is
+    the arithmetic people skip when they set maxSurge to 1 on a 50-replica
+    deployment and then wonder why the deploy takes an hour.
+    """
+    c = rollout_capacity(replicas, max_surge, max_unavailable)
+    if not c["can_progress"]:
+        raise ValueError("a rollout with no surge and no unavailability never proceeds")
+    per_wave = int(max_surge) + int(max_unavailable)
+    waves = math.ceil(int(replicas) / per_wave)
+    return {"per_wave": per_wave, "waves": waves}
+
+
+def rollout_duration_s(replicas, max_surge, max_unavailable, readiness_delay_s):
+    b = rollout_batches(replicas, max_surge, max_unavailable)
+    return b["waves"] * int(readiness_delay_s)
+
+
+def rollout_duration_view(replicas, max_surge, max_unavailable, readiness_delay_s):
+    b = rollout_batches(replicas, max_surge, max_unavailable)
+    total = rollout_duration_s(replicas, max_surge, max_unavailable, readiness_delay_s)
+    return {
+        "kind": "scalars",
+        "items": [
+            {"label": "Pods replaced per wave", "value": b["per_wave"]},
+            {"label": "Waves needed", "value": b["waves"]},
+            {"label": "Seconds per wave", "value": int(readiness_delay_s)},
+            {"label": "Total seconds", "value": total},
+        ],
+        "value_format": "d",
+        "caption": (f"{int(replicas)} replicas at {b['per_wave']} per wave is {b['waves']} waves, "
+                    f"and each wave waits {int(readiness_delay_s)}s for readiness: {total}s in total. "
+                    "The readiness delay is multiplied by the wave count, which is why a "
+                    "conservative surge setting is expensive on a large deployment."),
+    }
