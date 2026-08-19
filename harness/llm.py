@@ -77,7 +77,8 @@ class Call:
 
 class Model(Protocol):
     def complete(self, *, stage: str, system: str, prompt: str,
-                 schema: dict | None = None, model: str | None = None) -> Reply:
+                 schema: dict | None = None, model: str | None = None,
+                 allowed_tools: list[str] | None = None) -> Reply:
         ...
 
 
@@ -142,13 +143,15 @@ class AgentSDKModel:
         self._on_retry(stage, attempt, delay, reason)
 
     def complete(self, *, stage: str, system: str, prompt: str,
-                 schema: dict | None = None, model: str | None = None) -> Reply:
+                 schema: dict | None = None, model: str | None = None,
+                 allowed_tools: list[str] | None = None) -> Reply:
         chosen = model or self.default_model
         last: Exception | None = None
 
         for attempt in range(1, MAX_ATTEMPTS + 1):
             try:
-                reply = asyncio.run(self._complete_async(system, prompt, schema, chosen))
+                reply = asyncio.run(
+                    self._complete_async(system, prompt, schema, chosen, allowed_tools))
                 break
             except TransientModelError as e:
                 last = e
@@ -166,8 +169,8 @@ class AgentSDKModel:
             self.record.append(Call(stage=stage, system=system, prompt=prompt, reply=reply.text))
         return reply
 
-    async def _complete_async(self, system: str, prompt: str,
-                              schema: dict | None, model: str) -> Reply:
+    async def _complete_async(self, system: str, prompt: str, schema: dict | None,
+                              model: str, allowed_tools: list[str] | None = None) -> Reply:
         try:
             from claude_agent_sdk import (
                 AssistantMessage, ClaudeAgentOptions, ResultMessage, TextBlock, query,
@@ -181,7 +184,12 @@ class AgentSDKModel:
         options = ClaudeAgentOptions(
             model=model,
             system_prompt=system,
-            tools=[],                 # generation only; the model never acts
+            tools=[],                 # no custom tools; the model never acts on our behalf
+            # Only the grounding stage passes anything here, and only the two
+            # read-only web tools. Everything that writes a lesson runs with no
+            # tools at all, so a generation stage cannot reach the network or
+            # the filesystem however it is prompted.
+            allowed_tools=list(allowed_tools or []),
             setting_sources=None,     # ignore user/project settings for reproducibility
             # A bound, not a target. With no tools there is nothing to loop on,
             # but the CLI counts a turn for its own bookkeeping and a limit of 1
@@ -226,8 +234,15 @@ class AgentSDKModel:
             raise ModelAuthError(AUTH_HELP)
 
         # When output_format is set the reply is delivered on the result rather
-        # than as assistant text, so fall back to it before giving up.
-        text = "".join(chunks).strip() or payload.strip()
+        # than as assistant text. Assistant text can still be present, and when
+        # it is, it is commentary or a restatement of the prompt's own example,
+        # not the answer. Preferring it there cost a review run: the model
+        # echoed the template `{"findings": [...]}` as text alongside a correct
+        # structured payload, and the literal ellipsis was parsed as the reply.
+        # So the payload wins whenever a schema was asked for, and text is the
+        # fallback rather than the other way round.
+        spoken, structured = "".join(chunks).strip(), payload.strip()
+        text = (structured or spoken) if schema is not None else (spoken or structured)
         if not text:
             raise TransientModelError("the model returned no text")
         if looks_transient(text) and len(text) < 400:

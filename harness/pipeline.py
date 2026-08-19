@@ -536,7 +536,13 @@ def review_lesson(model: Model, slug: str, lessons_dir: pathlib.Path,
         built = BuiltModule(spec=spec, prose=module.get("prose", ""),
                             widget=widget, functions=[])
         on_event("stage", f"reviewing {spec['id']}")
-        found = run_review(model, curriculum, built, [], grounding, source=source)
+        try:
+            found = run_review(model, curriculum, built, [], grounding, source=source)
+        except ModelAuthError:
+            raise
+        except ModelError as e:
+            on_event("detail", f"{spec['id']}: the review itself failed ({e}); skipping it")
+            continue
         for item in found:
             on_event("detail" if item[0] == "WARN" else "drop", f"{item[1]}: {item[2][:150]}")
         if not found:
@@ -619,7 +625,16 @@ def build(model: Model, topic: str, *, output_root: pathlib.Path,
             continue
 
         if review:
-            findings = run_review(model, curriculum, module, built, grounding)
+            try:
+                findings = run_review(model, curriculum, module, built, grounding)
+            except ModelAuthError:
+                raise
+            except ModelError as e:
+                # A reviewer that cannot answer is not evidence against the
+                # module. Dropping work because the second opinion malfunctioned
+                # would be the wrong way to fail.
+                on_event("detail", f"{spec['id']}: review failed ({e}); shipping unreviewed")
+                findings = []
             report.reviewed += 1
             for severity, where, message in findings:
                 if severity == "WARN":
