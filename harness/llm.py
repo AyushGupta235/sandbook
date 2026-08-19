@@ -300,7 +300,8 @@ class ScriptedModel:
         return cls([Call(**c) for c in data["calls"]])
 
     def complete(self, *, stage: str, system: str, prompt: str,
-                 schema: dict | None = None, model: str | None = None) -> Reply:
+                 schema: dict | None = None, model: str | None = None,
+                 allowed_tools: list[str] | None = None) -> Reply:
         key = (stage, _module_of(prompt))
         if key not in self.by_stage and key[1] is not None:
             key = (stage, None)   # recordings made before prompts carried an id

@@ -78,8 +78,8 @@ def cmd_build(args: argparse.Namespace) -> int:
     print(f"building a lesson on: {args.topic}")
     try:
         report = pipeline.build(model, args.topic, output_root=OUTPUT,
-                                grounding=grounding, review=args.review,
-                                on_event=on_event)
+                                grounding=grounding, ground=args.ground,
+                                review=args.review, on_event=on_event)
     except ModelAuthError as e:
         print(f"\n{e}", file=sys.stderr)
         return 2
@@ -272,6 +272,9 @@ def main(argv: list[str] | None = None) -> int:
     p_build = sub.add_parser("build", help="generate a lesson into output/")
     p_build.add_argument("topic", help="what the lesson should teach")
     p_build.add_argument("--grounding", help="file of source notes to ground the lesson in")
+    p_build.add_argument("--ground", action="store_true",
+                         help="look up and cite versioned sources before writing "
+                              "(the only stage that reaches the network)")
     p_build.add_argument("--review", action="store_true",
                          help="have a fresh context check each module for false claims "
                               "(slower, and roughly doubles the cost)")
