@@ -403,14 +403,17 @@ def grade_manifest(submission):
         total_cpu += rc or lc
         total_mem += rm or lm
 
-        if not req or not lim:
-            missing = "requests" if not req else "limits"
-            add(f"{name}: both requests and limits set", False,
-                f"no {missing} block, and a container without limits can never be Guaranteed")
+        # Limits are what Guaranteed requires. A requests block is optional:
+        # each omitted request defaults to its limit, which qos_class already
+        # accounts for, so a limits-only manifest is Guaranteed and must not be
+        # marked wrong here.
+        if not lim:
+            add(f"{name}: cpu and memory limits set", False,
+                "no limits block, and a container without limits can never be Guaranteed")
             all_guaranteed = False
             continue
 
-        add(f"{name}: both requests and limits set", True)
+        add(f"{name}: cpu and memory limits set", True)
         cls = qos_class(rc, lc, rm, lm)
         if cls != "Guaranteed":
             all_guaranteed = False
@@ -418,7 +421,8 @@ def grade_manifest(submission):
             f"this container is {cls}" if cls != "Guaranteed" else "")
 
     add("Pod QoS class is Guaranteed", all_guaranteed and parse_ok,
-        "every container must set both limits with requests equal to them")
+        "every container needs cpu and memory limits, and any request it does "
+        "state must equal its limit")
     fits = total_cpu <= BUDGET_CPU_M and total_mem <= BUDGET_MEM_MI
     add(f"Fits the {BUDGET_CPU_M}m CPU / {BUDGET_MEM_MI}Mi budget", fits,
         f"this pod requests {total_cpu}m CPU and {total_mem}Mi memory")

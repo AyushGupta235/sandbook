@@ -272,7 +272,7 @@
         "starter": "apiVersion: v1\nkind: Pod\nmetadata:\n  name: checkout-api\nspec:\n  containers:\n    - name: api\n      image: ghcr.io/example/checkout:1.4.2\n      resources:\n        requests:\n          cpu: 500m\n          memory: 512Mi\n",
         "solution": "apiVersion: v1\nkind: Pod\nmetadata:\n  name: checkout-api\nspec:\n  containers:\n    - name: api\n      image: ghcr.io/example/checkout:1.4.2\n      resources:\n        requests:\n          cpu: 500m\n          memory: 512Mi\n        limits:\n          cpu: 500m\n          memory: 512Mi\n",
         "hints": [
-          "Guaranteed needs a limits block as well as a requests block. A container with no limit can never be Guaranteed, no matter how precise its request.",
+          "Guaranteed needs a limits block. A container with no limit can never be Guaranteed, no matter how precise its request. A requests block is optional: each omitted request defaults to its limit.",
           "The two blocks must match exactly, field for field: cpu equal to cpu, memory equal to memory."
         ]
       }
