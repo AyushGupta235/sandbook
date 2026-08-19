@@ -34,7 +34,7 @@
     {
       "id": "qos",
       "title": "Two numbers, four consequences",
-      "prose": "Every container can declare two things per resource. A **request** is a reservation: the scheduler subtracts it from a node's capacity and guarantees you that much. A **limit** is a ceiling: the kubelet and the kernel stop you exceeding it.\n\nThe pair also determines the pod's **QoS class**, which is what Kubernetes consults when a node runs out of memory and something has to die. `Guaranteed` pods are evicted last, `BestEffort` first.\n\nThe rule for `Guaranteed` is stricter than most people remember: *every* container needs both limits set, with requests equal to them. One container missing a memory limit demotes the whole pod to `Burstable`. Set a slider to 0 to represent an unset field.",
+      "prose": "Every container can declare two things per resource. A **request** is a reservation: the scheduler subtracts it from a node's capacity and guarantees you that much. A **limit** is a ceiling: the kubelet and the kernel stop you exceeding it.\n\nThe pair also determines the pod's **QoS class**, which is what Kubernetes consults when a node runs out of memory and something has to die. `Guaranteed` pods are evicted last, `BestEffort` first.\n\nThe rule for `Guaranteed` is stricter than most people remember: *every* container needs cpu and memory limits, and any request it states must equal its limit. One container missing a memory limit demotes the whole pod to `Burstable`. Set a slider to 0 to represent an unset field. An omitted request defaults to its limit, so 0 against a limit still counts as equal, which is why a limits-only container is `Guaranteed`.",
       "widget": {
         "type": "param-playground",
         "title": "QoS class calculator",
@@ -229,7 +229,7 @@
     {
       "id": "fragmentation",
       "title": "Pending, with 6 free cores",
-      "prose": "Now watch five pods arrive in order on an empty three-node cluster. Each is placed on the feasible node with the lowest utilisation.\n\nWatch the last one. It is the failure that generates the most confused incident channels: a pod stuck `Pending` while `kubectl top nodes` reports idle capacity.",
+      "prose": "Now watch five pods arrive in order on an empty three-node cluster. Each is placed on the feasible node with the lowest utilisation, meaning the mean of its CPU and memory fractions, with ties broken by node order. Watch step 4, where all three nodes are level and the order alone decides.\n\nWatch the last one. It is the failure that generates the most confused incident channels: a pod stuck `Pending` while the nodes look far from full. Read that capacity with `kubectl describe node`, which reports what is allocated from requests. `kubectl top` answers a different question, measured usage, and the gap between those two numbers is what this module is about.",
       "widget": {
         "type": "step-sim",
         "title": "Scheduling five pods onto three nodes",
