@@ -69,11 +69,17 @@ def kvcache_attn_output(q, keys, values):
 
 
 def recompute_kv_init():
+    c = kvcache_constants()
+    E = c["embeddings"]
     return {
         "step": 0,
         "t": 3,
+        # Both lanes start having prefilled the 3 prompt positions. The counters
+        # below track decode work only, which is where the lanes diverge.
         "no_cache_total": 0,
         "cached_total": 0,
+        "cache_k": [kvcache_linear(E[i], c["Wk"]) for i in range(3)],
+        "cache_v": [kvcache_linear(E[i], c["Wv"]) for i in range(3)],
         "output_nocache": [0.0, 0.0, 0.0, 0.0],
         "output_cached": [0.0, 0.0, 0.0, 0.0],
         "done": False,
@@ -88,22 +94,31 @@ def recompute_kv_step(state):
     Wv = c["Wv"]
     new_step = state["step"] + 1
     t = 3 + new_step
-    keys = [kvcache_linear(E[i], Wk) for i in range(t)]
-    values = [kvcache_linear(E[i], Wv) for i in range(t)]
     q = kvcache_linear(E[t - 1], Wq)
-    out = kvcache_attn_output(q, keys, values)
-    out_rounded = [round(x, 3) for x in out]
-    no_cache_total = state["no_cache_total"] + t
-    cached_total = state["cached_total"] + 1
-    done = new_step >= 3
+
+    # The two lanes are computed separately and on purpose. Deriving one output
+    # and displaying it twice would make the whole module circular: the learner
+    # is asked to check that these agree, and that check is only worth anything
+    # if the numbers arrived by different routes.
+    keys_recomputed = [kvcache_linear(E[i], Wk) for i in range(t)]
+    values_recomputed = [kvcache_linear(E[i], Wv) for i in range(t)]
+    out_nocache = kvcache_attn_output(q, keys_recomputed, values_recomputed)
+
+    # Cached lane: rows kept from earlier steps, exactly one new row appended.
+    cache_k = list(state["cache_k"]) + [kvcache_linear(E[t - 1], Wk)]
+    cache_v = list(state["cache_v"]) + [kvcache_linear(E[t - 1], Wv)]
+    out_cached = kvcache_attn_output(q, cache_k, cache_v)
+
     return {
         "step": new_step,
         "t": t,
-        "no_cache_total": no_cache_total,
-        "cached_total": cached_total,
-        "output_nocache": out_rounded,
-        "output_cached": out_rounded,
-        "done": done,
+        "no_cache_total": state["no_cache_total"] + t,
+        "cached_total": state["cached_total"] + 1,
+        "cache_k": cache_k,
+        "cache_v": cache_v,
+        "output_nocache": [round(x, 3) for x in out_nocache],
+        "output_cached": [round(x, 3) for x in out_cached],
+        "done": new_step >= 3,
     }
 
 
@@ -145,7 +160,7 @@ def recompute_kv_view(state):
             {"label": "current position being decoded", "value": t},
         ],
         "value_format": "d",
-        "caption": "After all three decode steps the no-cache lane will have done 4+5+6=15 K/V projections; the cached lane only ever does 3, one per new token.",
+        "caption": "Counting decode work only: across the three steps the no-cache lane does 4+5+6=15 K/V projections, the cached lane 3, one per new token. Both lanes also projected the 3 prompt positions during prefill, which is work neither one avoids.",
     }
 
     if step == 0:
