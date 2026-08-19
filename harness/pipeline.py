@@ -400,7 +400,8 @@ def errors_only(findings: list) -> list:
 RUNNER = ROOT / "verifier" / "runner.py"
 
 
-def module_facts(curriculum: dict, module: BuiltModule, accepted: list[BuiltModule]) -> str:
+def module_facts(curriculum: dict, module: BuiltModule, accepted: list[BuiltModule],
+                 source: str | None = None) -> str:
     """Run the module's own functions and report what they return.
 
     A reviewer reading prose and source alone has to trust its own arithmetic
@@ -455,7 +456,8 @@ def module_facts(curriculum: dict, module: BuiltModule, accepted: list[BuiltModu
     if scratch.errors or not ops:
         return "(the module's arguments could not be resolved, so nothing was run)"
 
-    source = model_source(curriculum, accepted + [module])
+    if source is None:
+        source = model_source(curriculum, accepted + [module])
     try:
         proc = subprocess.run(
             [sys.executable, str(RUNNER)],
@@ -502,8 +504,50 @@ REVIEW_SCHEMA = {
 }
 
 
+def review_lesson(model: Model, slug: str, lessons_dir: pathlib.Path,
+                  grounding: str = "", on_event=lambda *_: None) -> list:
+    """Review a lesson already on disk, module by module.
+
+    The same pass a build runs, pointed at a finished lesson. Useful for asking
+    what the reviewer says about work already believed correct, which is the
+    only way to find out how often it objects to nothing.
+    """
+    directory = lessons_dir / slug
+    lesson = json.loads((directory / "lesson.json").read_text())
+    source = (directory / lesson.get("model", "model.py")).read_text()
+    curriculum = {
+        "slug": slug,
+        "title": lesson.get("title", slug),
+        "subtitle": lesson.get("subtitle", ""),
+        "packages": lesson.get("packages") or [],
+        "objectives": lesson.get("objectives") or [],
+        "misconceptions": lesson.get("misconceptions") or [],
+    }
+
+    findings = []
+    for module in lesson.get("modules", []):
+        widget = module.get("widget")
+        if not widget:
+            continue
+        spec = {"id": module.get("id", "?"), "title": module.get("title", ""),
+                "widget_type": widget.get("type", ""),
+                "intent": "(not recorded; judge the module as it stands)",
+                "teaching_note": "(not recorded)"}
+        built = BuiltModule(spec=spec, prose=module.get("prose", ""),
+                            widget=widget, functions=[])
+        on_event("stage", f"reviewing {spec['id']}")
+        found = run_review(model, curriculum, built, [], grounding, source=source)
+        for item in found:
+            on_event("detail" if item[0] == "WARN" else "drop", f"{item[1]}: {item[2][:150]}")
+        if not found:
+            on_event("ok", f"{spec['id']}: no findings")
+        findings.extend(found)
+    return findings
+
+
 def run_review(model: Model, curriculum: dict, module: BuiltModule,
-               accepted: list[BuiltModule], grounding: str = "") -> list:
+               accepted: list[BuiltModule], grounding: str = "",
+               source: str | None = None) -> list:
     """Ask a fresh context whether this module teaches anything false.
 
     Returns verifier-shaped findings, so review defects flow into the same
@@ -516,8 +560,8 @@ def run_review(model: Model, curriculum: dict, module: BuiltModule,
             "review.md", curriculum, module.spec, set(), grounding,
             prose=module.prose,
             widget=json.dumps(module.widget, indent=2),
-            functions="\n\n".join(fn["source"] for fn in module.functions),
-            facts=module_facts(curriculum, module, accepted)),
+            functions=source or "\n\n".join(fn["source"] for fn in module.functions),
+            facts=module_facts(curriculum, module, accepted, source=source)),
         schema=REVIEW_SCHEMA,
         model="claude-opus-5",
     )

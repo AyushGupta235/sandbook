@@ -124,6 +124,46 @@ def cmd_build(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_review(args: argparse.Namespace) -> int:
+    """Ask a fresh context whether a finished lesson teaches anything false."""
+    sys.path.insert(0, str(ROOT / "harness"))
+    from llm import AgentSDKModel, ModelAuthError, ModelError
+    import pipeline
+
+    base = OUTPUT if args.from_output else LESSONS
+    slugs = args.slug or [p.name for p in _lesson_dirs(base)]
+    if not slugs:
+        print(f"no lessons in {base.name}/", file=sys.stderr)
+        return 1
+
+    icons = {"stage": "·", "ok": "✓", "drop": "✗", "detail": "!"}
+    model = AgentSDKModel()
+    grounding = pathlib.Path(args.grounding).read_text() if args.grounding else ""
+
+    errors = warnings = 0
+    for slug in slugs:
+        print(f"\n{slug}")
+        try:
+            findings = pipeline.review_lesson(
+                model, slug, base, grounding,
+                on_event=lambda kind, msg: print(f"  {icons.get(kind, '·')} {msg}", flush=True))
+        except ModelAuthError as e:
+            print(f"\n{e}", file=sys.stderr)
+            return 2
+        except ModelError as e:
+            print(f"  review could not run: {e}", file=sys.stderr)
+            return 1
+        errors += sum(1 for s, _, _ in findings if s == "ERROR")
+        warnings += len(findings) - sum(1 for s, _, _ in findings if s == "ERROR")
+
+    print(f"\n{errors} objection(s), {warnings} warning(s)")
+    if getattr(model, "total_cost_usd", 0.0):
+        print(f"cost: ${model.total_cost_usd:.2f}")
+    print("\nThese are one model's opinions, not verifier findings. Read them "
+          "before acting on any of them.")
+    return 0
+
+
 def cmd_promote(args: argparse.Namespace) -> int:
     source = OUTPUT / args.slug
     if not (source / "lesson.json").exists():
@@ -243,6 +283,13 @@ def main(argv: list[str] | None = None) -> int:
     p_promote.add_argument("slug")
     p_promote.add_argument("--force", action="store_true", help="replace an existing lesson")
     p_promote.set_defaults(func=cmd_promote)
+
+    p_review = sub.add_parser("review", help="check a finished lesson for false claims")
+    p_review.add_argument("slug", nargs="*", help="lesson slugs (default: all)")
+    p_review.add_argument("--from-output", action="store_true",
+                          help="review a draft in output/ rather than a promoted lesson")
+    p_review.add_argument("--grounding", help="file of source material to check claims against")
+    p_review.set_defaults(func=cmd_review)
 
     p_serve = sub.add_parser("serve", help="serve the runtime on localhost")
     p_serve.add_argument("--port", type=int, default=DEFAULT_PORT)
