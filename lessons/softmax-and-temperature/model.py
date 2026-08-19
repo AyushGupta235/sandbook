@@ -128,8 +128,11 @@ def sweep_view(preset, t_min=0.05, t_max=3.0, steps=60):
             {"label": "entropy ÷ ln(vocab)", "values": ent},
         ],
         "caption": (
-            "Left edge is greedy decoding, right edge approaches a uniform draw. "
-            "The two curves are mirror images: sharpening one is flattening the other."
+            "The left edge is close to greedy decoding without being it, and the "
+            "right edge is heading toward a uniform draw without reaching it; both "
+            "are limits this sweep only approaches. The two curves move against "
+            "each other throughout, one rising wherever the other falls, though "
+            "they are not reflections: each has its own shape."
         ),
     }
 
