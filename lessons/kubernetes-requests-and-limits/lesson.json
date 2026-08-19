@@ -260,7 +260,7 @@
     {
       "id": "write-manifest",
       "title": "Write a Guaranteed pod",
-      "prose": "Below is a manifest for a checkout API. It reserves capacity but stops there, so it is `Burstable`. It may be throttled unpredictably by noisy neighbours, and under node memory pressure it is evicted before any `Guaranteed` workload.\n\nMake it `Guaranteed`, staying within a budget of **2000m CPU** and **4096Mi memory**. The checker parses your YAML the same way the API server would.",
+      "prose": "Below is a manifest for a checkout API. It reserves capacity but stops there, so it is `Burstable`. With no CPU limit it is never CFS-throttled, but nothing protects the headroom above its request either: it can burst while the node is idle and lose that burst the moment neighbours get busy. Under node memory pressure the kubelet ranks pods that are over their requests for eviction first, and a `Guaranteed` pod is never over its own.\n\nMake it `Guaranteed`, staying within a budget of **2000m CPU** and **4096Mi memory**. The checker parses your YAML the same way the API server would.",
       "widget": {
         "type": "code-cell",
         "title": "pod.yaml",
