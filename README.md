@@ -50,7 +50,8 @@ Then open <http://localhost:8765/runtime/index.html>.
 ```bash
 ./sandbook list        # built lessons
 ./sandbook verify      # hold every lesson to the contract
-./sandbook selftest    # verifier mutation suite plus pipeline regression
+./sandbook selftest    # kernel tests, mutation suite, pipeline regression
+./sandbook review      # ask a fresh context whether a lesson teaches anything false
 ```
 
 ## Generating a lesson
@@ -79,6 +80,21 @@ Generation authenticates through the Claude Agent SDK, which runs your local
 separate API key. If it reports an expired OAuth session, run `claude` and then
 `/login`. Nothing else in the project needs credentials.
 
+Two optional stages, both off by default:
+
+```bash
+./sandbook build "Temporal retry policies" --ground --review
+```
+
+`--ground` looks up and cites versioned sources before anything is written. It
+is the only stage that reaches the network, and only through read-only web
+tools; every stage that writes a lesson runs with no tools at all. Fetched pages
+are treated as source material, never as instruction, and nothing in them can
+loosen a verifier check.
+
+`--review` has a fresh context check each module for false claims, and roughly
+doubles the cost.
+
 `--replay <recording>` runs the whole pipeline from recorded replies with no
 model calls, which is how the regression tests work; `--record <file>` saves a
 live run for replay later.
@@ -94,24 +110,57 @@ the only network request is the Pyodide download from jsDelivr.
 | `runtime/` | Shell, widgets, SVG renderer. Hand-written, never generated. |
 | `runtime/sandbox_bootstrap.py` | Sandbox semantics shared by browser and verifier. |
 | `lessons/<slug>/` | A lesson: `lesson.json` plus `model.py`. |
+| `kernels/` | Trusted reference implementations. Hand-written, property-tested, never generated. |
 | `verifier/` | Contract checks, subprocess runner, mutation suite, pipeline regression. |
 | `harness/` | CLI, generation pipeline, and the prompts that encode the contract. |
 | `output/` | Generated drafts, gitignored, promoted into `lessons/` after review. |
 
 ## On trusting the output
 
-The verifier checks that a lesson is well-formed, executable, and internally
-consistent. It does not yet check that the content is true. A confident, wrong
-explanation with matching code would pass today. Closing that gap needs trusted
-reference implementations for known primitives plus a separate review pass
-against cited sources, which is planned but not built.
+Checking that a lesson is well-formed is easy. Checking that it is **true** is
+the hard part, and it is the only part that matters: a learner who absorbs a
+confident wrong explanation is worse off than one who read nothing, because
+they now have no reason to look it up.
 
-`./sandbook selftest` is how that machinery earns trust. It plants 17 known
-defects across both lessons and confirms each is caught, then runs the pipeline
-against recorded replies and confirms it repairs what it can, drops what it
-cannot, and writes nothing when nothing survives. A verifier that has never
-rejected anything is not evidence of much. Every new check should ship with the
-mutation that proves it fires.
+Four layers, each covering something the one before it structurally cannot see.
+
+**Contract checks** prove a lesson is well-formed, executable, and internally
+consistent: every function a widget names exists, every view renders at every
+corner of its parameter space, quiz answers are *derived* by running code
+rather than asserted, exercises are solvable and not already solved, and
+simulations terminate. A lesson that is consistently wrong passes all of it.
+
+**Kernels** (`kernels/`) close part of that gap. They are hand-written,
+property-tested implementations of known primitives, reviewed by a person and
+never generated. A lesson declares that one of its functions computes one, and
+both are run over the kernel's probe inputs and required to agree. The mutation
+that proves this works is a softmax that ignores temperature: right shape,
+probabilities still sum to 1, every other check still passes, and it teaches
+something false.
+
+**Review** (`--review`) covers claims no kernel exists for. A fresh context sees
+the prose, the widget, the source, and *what the functions actually return when
+run*, and reports claims it can show are false. Showing it the computed values
+is the point: a reviewer working from prose alone has to trust its own
+arithmetic about code it cannot execute, which is the same weakness that let the
+claim through. It is a model judging a model, so it cannot be proven correct the
+way the kernel check can.
+
+**Provenance** covers going stale. A version-pinned lesson records its date and
+its sources; a citation nobody can follow is an error, and a pin that is
+uncited or over a year old is a warning.
+
+`./sandbook selftest` is how all of it earns trust. It runs the kernels' own
+property tests first, since everything measured against a wrong kernel is wrong
+in the same direction, then plants 24 known defects and confirms each is caught,
+then replays two recorded live builds and confirms the pipeline repairs what it
+can, drops what it cannot, and writes nothing when nothing survives. A verifier
+that has never rejected anything is not evidence of much. **Every new check
+ships with the mutation that proves it fires.**
+
+What is still not checked: whether the *choice* of what to teach is good. And
+`--review` and `--ground` are opt-in, because neither has enough live evidence
+yet to run by default.
 
 ## Reading order
 
