@@ -1,0 +1,147 @@
+{
+  "schema_version": 1,
+  "slug": "rolling-updates-and-readiness",
+  "title": "Rolling Updates and Readiness",
+  "subtitle": "Why a rollout with no downtime budget can stall forever while every request still succeeds.",
+  "model": "model.py",
+  "packages": [],
+  "targets": "Kubernetes 1.29+, apps/v1 Deployment with the RollingUpdate strategy",
+  "generated_on": "2026-08-20",
+  "sources": [
+    {
+      "title": "Kubernetes docs: Performing a Rolling Update",
+      "url": "https://kubernetes.io/docs/tutorials/kubernetes-basics/update/update-intro/"
+    },
+    {
+      "title": "Kubernetes docs: Deployments, Rolling Update Deployment",
+      "url": "https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#rolling-update-deployment"
+    },
+    {
+      "title": "Kubernetes docs: Configure Liveness, Readiness and Startup Probes",
+      "url": "https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/"
+    }
+  ],
+  "objectives": [
+    "Order the steps of a rolling update and say which step gates which",
+    "Predict how far capacity can dip for a given maxSurge and maxUnavailable",
+    "Recognise a stalled rollout from the fact that nothing is failing"
+  ],
+  "misconceptions": [
+    {
+      "claim": "A pod that is Running is taking traffic.",
+      "reality": "Endpoints are gated on readiness, not on Running. A running pod that fails its readiness probe is in the cluster, consuming resources, and receiving nothing."
+    },
+    {
+      "claim": "maxUnavailable: 0 is the safe setting.",
+      "reality": "It removes the capacity dip and adds a new failure mode: with no room to surge, or with a new pod that never becomes ready, the rollout cannot proceed at all."
+    },
+    {
+      "claim": "A broken rollout shows up as errors.",
+      "reality": "The old pods keep serving. A rollout stuck on readiness produces a perfectly healthy dashboard and ships nothing."
+    }
+  ],
+  "modules": [
+    {
+      "id": "order",
+      "title": "What Happens, In What Order",
+      "prose": "A rolling update is not a script the controller runs top to bottom. It is a set of dependencies, and more than one order satisfies them. What matters is which step gates which.\n\nPut these seven events in an order that could actually happen. Several orders are correct, and the widget will accept any of them; it only objects when you put something before the thing it depends on.\n\nThe pair worth thinking hardest about: when is the old pod allowed to die?",
+      "widget": {
+        "type": "order-build",
+        "title": "Sequence one pod replacement",
+        "task": "A Deployment with maxUnavailable: 0 and maxSurge: 1 is updated. Order the events for replacing a single pod.",
+        "items": [
+          {"id": "old-terminate", "label": "Old pod is terminated", "detail": "the controller sends SIGTERM"},
+          {"id": "probe-pass", "label": "New pod passes its readiness probe", "detail": "kubelet marks it Ready"},
+          {"id": "edit", "label": "Deployment spec is edited", "detail": "a new image tag is set"},
+          {"id": "endpoint-remove", "label": "Old pod leaves Service endpoints", "detail": "it stops receiving requests"},
+          {"id": "new-rs", "label": "New ReplicaSet is created", "detail": "scaled to 1"},
+          {"id": "endpoint-add", "label": "New pod joins Service endpoints", "detail": "it starts receiving requests"},
+          {"id": "surge-pod", "label": "Surge pod is scheduled and starts", "detail": "Running, not yet Ready"}
+        ],
+        "order": {"fn": "rollout_order", "args": {}},
+        "explanation": "The one that catches people: the old pod cannot be terminated until the new one is in endpoints, and it only enters endpoints once readiness passes. Readiness is the gate the whole rollout hangs on."
+      }
+    },
+    {
+      "id": "capacity",
+      "title": "How Far Capacity Can Dip",
+      "prose": "`maxSurge` is how many pods above the desired count may exist at once. `maxUnavailable` is how far below the desired count the available pods may fall.\n\nBoth are subtracted from the **desired** count, not from what is currently running. That is why `maxUnavailable: 0` means capacity never dips, no matter how slow the rollout is, and why it needs somewhere to put the extra pod.\n\nDrag the two knobs. Watch what happens when you set both to zero.",
+      "widget": {
+        "type": "param-playground",
+        "title": "Surge and unavailability",
+        "params": [
+          {"id": "replicas", "label": "Replicas", "kind": "range", "min": 1, "max": 20, "step": 1, "default": 10, "format": "d", "unit": " pods"},
+          {"id": "max_surge", "label": "maxSurge", "kind": "range", "min": 0, "max": 5, "step": 1, "default": 1, "format": "d", "unit": " pods"},
+          {"id": "max_unavailable", "label": "maxUnavailable", "kind": "range", "min": 0, "max": 5, "step": 1, "default": 0, "format": "d", "unit": " pods"}
+        ],
+        "view": {
+          "fn": "rollout_capacity_view",
+          "args": {
+            "replicas": {"param": "replicas"},
+            "max_surge": {"param": "max_surge"},
+            "max_unavailable": {"param": "max_unavailable"}
+          }
+        },
+        "readouts": [
+          {
+            "label": "Guaranteed serving",
+            "fn": "rollout_min_available",
+            "format": "d",
+            "unit": " pods",
+            "args": {
+              "replicas": {"param": "replicas"},
+              "max_surge": {"param": "max_surge"},
+              "max_unavailable": {"param": "max_unavailable"}
+            }
+          },
+          {
+            "label": "Peak pods",
+            "fn": "rollout_peak",
+            "format": "d",
+            "unit": " pods",
+            "args": {
+              "replicas": {"param": "replicas"},
+              "max_surge": {"param": "max_surge"},
+              "max_unavailable": {"param": "max_unavailable"}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "stuck",
+      "title": "The Rollout That Never Finishes",
+      "prose": "A team ships a change. The readiness probe points at port 8080; the new image serves on 3000. The probe never passes.\n\nBefore you look at the numbers, decide what the on-call engineer sees. The Deployment has 10 replicas, `maxUnavailable: 0`, `maxSurge: 1`.",
+      "widget": {
+        "type": "predict-reveal",
+        "title": "What does this look like from outside?",
+        "question": "The readiness probe on the new pod can never pass. What is the state of the service twenty minutes later?",
+        "options": [
+          {
+            "id": "outage",
+            "text": "An outage: the old pods were terminated and the new ones are not serving, so requests fail.",
+            "predicate": "result['available'] == 0"
+          },
+          {
+            "id": "degraded",
+            "text": "Degraded: about half the pods have been replaced and are not serving, so capacity is roughly halved.",
+            "predicate": "0 < result['available'] < result['replicas']"
+          },
+          {
+            "id": "healthy-stuck",
+            "text": "Nothing is wrong from outside: all 10 old pods still serve every request, and the rollout has simply stopped making progress.",
+            "predicate": "result['available'] == result['replicas'] and result['progress_percent'] == 0.0"
+          },
+          {
+            "id": "retry-loop",
+            "text": "The controller gives up and rolls back automatically, so the old version is restored and the Deployment reports failure.",
+            "predicate": "result['updated_pods'] == 0"
+          }
+        ],
+        "check": {"fn": "stuck_rollout_facts", "args": {}},
+        "view": {"fn": "stuck_rollout_view", "args": {}},
+        "explanation": "With maxUnavailable at 0 the controller may not terminate an old pod until a new one is available, and the new one never becomes available. So all 10 old pods keep serving, every request succeeds, and the rollout sits at zero progress. This is the failure mode worth internalising: nothing is down, no alert fires, and nothing you wrote is running."
+      }
+    }
+  ]
+}

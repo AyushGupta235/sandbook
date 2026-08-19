@@ -42,7 +42,8 @@ PROMPTS = ROOT / "harness" / "prompts"
 MAX_REPAIR_ROUNDS = 3
 MODULE_BUILD_ATTEMPTS = 2   # a reply in the wrong shape earns one more ask
 
-WIDGET_TYPES = {"param-playground", "predict-reveal", "step-sim", "code-cell"}
+WIDGET_TYPES = {"param-playground", "predict-reveal", "step-sim", "code-cell",
+                "order-build"}
 
 
 # ----------------------------------------------------------------- rendering
@@ -587,7 +588,7 @@ REVIEW_SCHEMA = {
 def widget_functions(widget: dict) -> list[str]:
     """Every model function a widget names directly."""
     names = []
-    for key in ("view", "check", "init", "step", "grade"):
+    for key in ("view", "check", "init", "step", "grade", "order"):
         fn = (widget.get(key) or {}).get("fn")
         if fn:
             names.append(fn)

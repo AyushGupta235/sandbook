@@ -34,7 +34,8 @@ LESSONS = ROOT / "lessons"
 RUNNER = ROOT / "verifier" / "runner.py"
 TIMEOUT_S = 120
 
-WIDGET_TYPES = {"param-playground", "predict-reveal", "step-sim", "code-cell"}
+WIDGET_TYPES = {"param-playground", "predict-reveal", "step-sim", "code-cell",
+                "order-build"}
 VIEW_KINDS = {"bars", "lines", "grid", "scalars", "text", "stack"}
 
 # House style, enforced rather than requested. The prompts ask for this too, but
@@ -407,6 +408,26 @@ def verify_lesson(slug: str, lessons_dir: pathlib.Path | None = None) -> Finding
                             "args": resolve_args(v.get("args"), {}, where, set(), f)})
                 plan.append({"kind": "view", "where": f"{where} reveal view"})
 
+        elif wtype == "order-build":
+            items = widget.get("items") or []
+            order = widget.get("order") or {}
+            ids = [it.get("id") for it in items if isinstance(it, dict)]
+            if len(items) < 3:
+                f.error(where, "order-build needs at least three steps to be worth ordering")
+            if len(set(ids)) != len(ids) or not all(ids):
+                f.error(where, f"item ids must all be present and unique, got {ids}")
+            if not order.get("fn"):
+                f.error(where, "order-build needs order.fn; the right order is derived, "
+                               "not written into the config")
+                continue
+            for key in ("correct_order", "answer", "solution"):
+                if key in widget:
+                    f.error(where, f"order-build must not assert an answer via {key!r}")
+            ops.append({"op": "call", "fn": order["fn"],
+                        "args": resolve_args(order.get("args"), {}, where, set(), f)})
+            plan.append({"kind": "ordering", "where": where, "ids": ids,
+                         "listed": [it.get("id") for it in items if isinstance(it, dict)]})
+
         elif wtype == "step-sim":
             init, step, view = widget.get("init"), widget.get("step"), widget.get("view")
             if not (init and step and view and init.get("fn") and step.get("fn") and view.get("fn")):
@@ -561,6 +582,42 @@ def verify_lesson(slug: str, lessons_dir: pathlib.Path | None = None) -> Finding
             state = res.get("result")
             if isinstance(state, dict) and state.get("done") and meta["widget"] not in sim_done:
                 sim_done[meta["widget"]] = meta["index"]
+
+        elif kind == "ordering":
+            result = res.get("result")
+            if not isinstance(result, dict):
+                f.error(where, "order.fn must return an object with 'order' and 'constraints'")
+                continue
+            canonical = result.get("order")
+            constraints = result.get("constraints")
+            ids = meta["ids"]
+            if not isinstance(canonical, list) or sorted(map(str, canonical)) != sorted(map(str, ids)):
+                f.error(where, f"order.fn returned {canonical}, which is not an arrangement of "
+                               f"the widget's items {ids}")
+                continue
+            if not isinstance(constraints, list) or not constraints:
+                f.error(where, "order.fn declares no constraints, so every arrangement is "
+                               "correct and the exercise asks nothing")
+                continue
+
+            position = {str(i): p for p, i in enumerate(canonical)}
+            bad = [c for c in constraints
+                   if not (isinstance(c, (list, tuple)) and len(c) == 2
+                           and str(c[0]) in position and str(c[1]) in position)]
+            if bad:
+                f.error(where, f"constraints {bad[:3]} are not pairs of item ids")
+                continue
+            broken = [c for c in constraints if position[str(c[0])] > position[str(c[1])]]
+            if broken:
+                f.error(where, f"the order it calls correct breaks its own constraint(s) "
+                               f"{broken[:3]}; the exercise cannot be solved as specified")
+                continue
+            # Solvable but not already solved: reading the steps top to bottom
+            # must not already be a valid answer.
+            listed = {str(i): p for p, i in enumerate(meta["listed"])}
+            if not [c for c in constraints if listed[str(c[0])] > listed[str(c[1])]]:
+                f.error(where, "the steps are already listed in a valid order, so the learner "
+                               "solves this by pressing the buttons top to bottom")
 
         elif kind == "predicates":
             if not res.get("ok"):

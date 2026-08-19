@@ -110,6 +110,26 @@ If the lesson genuinely needs the learner to switch between scenarios and watch
 each play out, that is a param-playground whose view draws the whole run, not a
 step-sim.
 
+**order-build**
+```
+{"type": "order-build", "title": "...", "task": "...",
+ "items": [{"id": "edit", "label": "Deployment spec is edited", "detail": "optional"}],
+ "order": {"fn": "rollout_order", "args": {}},
+ "explanation": "..."}
+```
+`order.fn` returns `{"order": [id, ...], "constraints": [[before, after], ...]}`.
+The learner's arrangement is judged against the **constraints**, not against
+your ordering, so every arrangement that satisfies them is accepted. Say what is
+genuinely required and leave the rest unordered: two steps that really happen
+together should not be constrained against each other, or you fail a learner who
+is right.
+
+Rules the verifier enforces: at least three items with unique ids, at least one
+constraint, `order` must be an arrangement of exactly those ids, that order must
+satisfy every constraint it declares, and **the order the items are listed in
+must break at least one constraint**, so the exercise cannot be solved by
+clicking top to bottom. Never write the answer into the config.
+
 **code-cell**, Python flavour
 ```
 {"type": "code-cell", "title": "...", "language": "python", "task": "...",

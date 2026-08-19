@@ -34,6 +34,10 @@ should do:
   must have an answer a function can produce.
 - `step-sim`: step through an algorithm or process one state at a time. Use
   when the insight is in the sequence, and when the run reaches a definite end.
+- `order-build`: the learner arranges steps into a working order. Use when the
+  insight is *which step gates which*: dependency graphs, apply order, rollout
+  and startup sequences, protocol handshakes. Correctness is judged against
+  declared constraints, so several orders can be right.
 - `code-cell`: the learner writes something real. Two flavours: Python code
   checked by hidden assertions, or a text artefact (YAML, HCL, a config) that a
   Python function parses and grades. Use when doing beats watching.

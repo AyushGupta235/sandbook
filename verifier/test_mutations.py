@@ -24,6 +24,7 @@ LESSONS = ROOT / "lessons"
 
 PY_LESSON = "softmax-and-temperature"
 YAML_LESSON = "kubernetes-requests-and-limits"
+ORDER_LESSON = "rolling-updates-and-readiness"
 
 
 def find_widget(lesson: dict, wtype: str, graded: bool | None = None) -> dict:
@@ -234,7 +235,70 @@ def mut_sim_grid_mismatch(lesson, model):
     )
 
 
+# ------------------------------------------------ mutations: order-build --
+
+
+def mut_order_already_solved(lesson, model):
+    """List the steps in an order that already satisfies every constraint.
+
+    The exercise still renders and still scores; it just asks nothing, because
+    clicking the steps top to bottom is a correct answer.
+    """
+    w = find_widget(lesson, "order-build")
+    canonical = ["edit", "new-rs", "surge-pod", "probe-pass",
+                 "endpoint-add", "old-terminate", "endpoint-remove"]
+    by_id = {it["id"]: it for it in w["items"]}
+    w["items"] = [by_id[i] for i in canonical]
+    return lesson, model
+
+
+def mut_order_contradicts_itself(lesson, model):
+    """Declare a constraint the returned order does not satisfy."""
+    return lesson, model + (
+        "\n\n_orig_rollout_order = rollout_order\n"
+        "def rollout_order():\n"
+        "    r = _orig_rollout_order()\n"
+        "    r['constraints'] = r['constraints'] + [['endpoint-remove', 'edit']]\n"
+        "    return r\n"
+    )
+
+
+def mut_order_unconstrained(lesson, model):
+    """No constraints at all, so every arrangement is 'correct'."""
+    return lesson, model + (
+        "\n\n_orig_rollout_order2 = rollout_order\n"
+        "def rollout_order():\n"
+        "    r = _orig_rollout_order2()\n"
+        "    r['constraints'] = []\n"
+        "    return r\n"
+    )
+
+
+def mut_order_incomplete(lesson, model):
+    """Return an order missing one of the widget's items."""
+    return lesson, model + (
+        "\n\n_orig_rollout_order3 = rollout_order\n"
+        "def rollout_order():\n"
+        "    r = _orig_rollout_order3()\n"
+        "    r['order'] = r['order'][:-1]\n"
+        "    return r\n"
+    )
+
+
+def mut_order_asserted_answer(lesson, model):
+    """Smuggle the answer into the config instead of deriving it."""
+    find_widget(lesson, "order-build")["correct_order"] = ["edit", "new-rs"]
+    return lesson, model
+
+
 SUITES = [
+    (ORDER_LESSON, [
+        ("steps already in a valid order", mut_order_already_solved,   "already listed in a valid order"),
+        ("order breaks its own constraint", mut_order_contradicts_itself, "breaks its own constraint"),
+        ("no constraints, any order passes", mut_order_unconstrained,  "declares no constraints"),
+        ("order omits an item",             mut_order_incomplete,      "not an arrangement"),
+        ("order answer asserted, not derived", mut_order_asserted_answer, "must not assert an answer"),
+    ]),
     (PY_LESSON, [
         ("two options both correct",     mut_two_answers,             "predicates are true"),
         ("no option is correct",         mut_no_answer,               "no correct answer"),
