@@ -342,11 +342,75 @@ def grounding_text(found: dict) -> str:
     return "\n".join(parts)
 
 
-def run_curriculum(model: Model, topic: str, grounding: str = "") -> dict:
+# Named rather than numeric on purpose. `--modules 12` is a padding knob, and
+# padding is what makes a lesson worth skipping. What a level really changes is
+# which misconceptions are worth targeting: an expert lesson on KV-caching
+# should not explain what a cache is.
+LEVELS = {
+    "orientation": {
+        "modules": "3 to 4",
+        "assumes": "nothing about this topic, though they are a working engineer",
+        "targets": "what it is, why it exists, and one thing they can do with it. "
+                   "Target the misconceptions of someone who has only heard the name.",
+    },
+    "working": {
+        "modules": "4 to 6",
+        "assumes": "a competent engineer meeting this topic properly for the first time",
+        "targets": "correct everyday use and the failure they will actually hit first. "
+                   "Target the misconceptions that cause real incidents.",
+    },
+    "deep": {
+        "modules": "6 to 8",
+        "assumes": "they have used this in earnest and know the basics cold",
+        "targets": "mechanism, edge cases, and behaviour under load or at scale. "
+                   "Skip anything the docs' getting-started page covers. Target the "
+                   "misconceptions that survive ordinary use and only break under "
+                   "pressure.",
+    },
+    "expert": {
+        "modules": "4 to 6",
+        "assumes": "fluency, including the internals most users never touch",
+        "targets": "only the counterintuitive parts: where the obvious mental model is "
+                   "subtly wrong, where two correct rules interact badly, where the "
+                   "documented behaviour and the real behaviour differ. Explaining "
+                   "anything they could have looked up is a wasted module.",
+    },
+}
+DEFAULT_LEVEL = "working"
+
+
+def level_text(level: str, assume: str = "") -> str:
+    """Render the depth setting for the curriculum prompt."""
+    # Normalise first. Falling back to the default brief while still printing
+    # the unknown name would describe the lesson as something it is not.
+    level = level if level in LEVELS else DEFAULT_LEVEL
+    spec = LEVELS[level]
+    parts = [
+        "## Depth",
+        "",
+        f"Write at the **{level}** level.",
+        "",
+        f"- Length: {spec['modules']} modules.",
+        f"- Assume: {spec['assumes']}.",
+        f"- Aim at: {spec['targets']}",
+        "",
+        "Depth is about which misconceptions are worth a module, not about how many",
+        "modules there are. Do not pad a deeper level with material a shallower one",
+        "would have covered.",
+    ]
+    if assume:
+        parts += ["", "The reader also says this about themselves, and it outranks the",
+                  "level above wherever the two disagree:", "", f"> {assume}"]
+    return "\n".join(parts)
+
+
+def run_curriculum(model: Model, topic: str, grounding: str = "",
+                   level: str = DEFAULT_LEVEL, assume: str = "") -> dict:
     reply = model.complete(
         stage="curriculum",
         system="You design interactive technical lessons. You return JSON only.",
         prompt=render("curriculum.md", topic=topic,
+                      depth=level_text(level, assume),
                       grounding=grounding or "No grounding notes supplied."),
         schema=CURRICULUM_SCHEMA,
         model="claude-opus-5",
@@ -361,6 +425,7 @@ PLAN_FILE = "curriculum.json"
 
 def plan(model: Model, topic: str, *, output_root: pathlib.Path, grounding: str = "",
          ground: bool = False, use_profile: bool = True,
+         level: str = DEFAULT_LEVEL, assume: str = "",
          on_event=lambda *_: None) -> dict:
     """Design the outline and stop there.
 
@@ -382,8 +447,8 @@ def plan(model: Model, topic: str, *, output_root: pathlib.Path, grounding: str 
         on_event("detail", f"{len(established)} thing(s) you have already shown you know")
         grounding = "\n\n".join(p for p in (grounding, learner_profile.known_text(established)) if p)
 
-    on_event("stage", "designing the curriculum")
-    curriculum = run_curriculum(model, topic, grounding)
+    on_event("stage", f"designing the curriculum ({level})")
+    curriculum = run_curriculum(model, topic, grounding, level=level, assume=assume)
     if gathered.get("sources"):
         curriculum["sources"] = gathered["sources"]
         curriculum.setdefault("targets", gathered.get("targets"))
@@ -937,7 +1002,7 @@ def run_review(model: Model, curriculum: dict, module: BuiltModule,
 
 def build(model: Model, topic: str, *, output_root: pathlib.Path,
           grounding: str = "", ground: bool = False, review: bool = False,
-          curriculum: dict | None = None,
+          curriculum: dict | None = None, level: str = DEFAULT_LEVEL, assume: str = "",
           on_event=lambda *_: None) -> BuildReport:
     if curriculum is not None:
         # Building from an outline the reader has already seen and approved.
@@ -959,8 +1024,8 @@ def build(model: Model, topic: str, *, output_root: pathlib.Path,
             on_event("detail", f"not established: {gathered['unresolved'][:160]}")
         grounding = "\n\n".join(part for part in (grounding, grounding_text(gathered)) if part)
 
-    on_event("stage", "designing the curriculum")
-    curriculum = run_curriculum(model, topic, grounding)
+    on_event("stage", f"designing the curriculum ({level})")
+    curriculum = run_curriculum(model, topic, grounding, level=level, assume=assume)
     # Citations come from what was actually retrieved, not from what the writing
     # stage remembers about it.
     if gathered.get("sources"):

@@ -21,6 +21,8 @@ for the first time. Do not explain what a function or a network is.
 you write, including the title, the subtitle, and every teaching note. Use a
 comma, a colon, a semicolon, brackets, or two sentences.
 
+{depth}
+
 ## Widget types
 
 Each module gets exactly one widget. Choose the one that fits what the learner
@@ -87,7 +89,7 @@ Return one JSON object and nothing else. No markdown fence, no commentary.
 
 Rules:
 
-- 4 to 6 modules.
+- Module count follows the depth section above.
 - `packages` lists Python packages the lesson's functions need, and must be
   available in Pyodide. Use `[]` unless a package is genuinely required;
   `pyyaml` for YAML parsing is the common exception. Do not list numpy unless

@@ -124,6 +124,7 @@ def cmd_build(args: argparse.Namespace) -> int:
         report = pipeline.build(model, args.topic or "", output_root=OUTPUT,
                                 grounding=grounding, ground=args.ground,
                                 review=args.review, curriculum=saved,
+                                level=args.level, assume=args.assume or "",
                                 on_event=on_event)
     except ModelAuthError as e:
         print(f"\n{e}", file=sys.stderr)
@@ -208,6 +209,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
             grounding = pathlib.Path(args.grounding).read_text() if args.grounding else ""
             curriculum = pipeline.plan(model, args.topic, output_root=OUTPUT,
                                        grounding=grounding, ground=args.ground,
+                                       level=args.level, assume=args.assume or "",
                                        on_event=on_event)
             print()
             print(pipeline.outline_text(curriculum))
@@ -504,6 +506,12 @@ def main(argv: list[str] | None = None) -> int:
     p_plan.add_argument("topic", nargs="?", help="what the lesson should teach")
     p_plan.add_argument("--edit", metavar="SLUG",
                         help="revise a saved outline module by module")
+    p_plan.add_argument("--level", choices=["orientation", "working", "deep", "expert"],
+                        default="working",
+                        help="how deep to go (default: working). Changes which "
+                             "misconceptions are worth a module, not just how many")
+    p_plan.add_argument("--assume", metavar="TEXT",
+                        help="what you already know, in your own words; outranks --level")
     p_plan.add_argument("--ground", action="store_true",
                         help="look up and cite versioned sources first")
     p_plan.add_argument("--grounding", help="file of source material to design against")
@@ -527,6 +535,10 @@ def main(argv: list[str] | None = None) -> int:
     p_build.add_argument("--vault", help=f"path to the vault (default: ${notes_env()})")
     p_build.add_argument("--no-links", action="store_true",
                          help="use only the named note, not the notes it links to")
+    p_build.add_argument("--level", choices=["orientation", "working", "deep", "expert"],
+                         default="working", help="how deep to go (default: working)")
+    p_build.add_argument("--assume", metavar="TEXT",
+                         help="what you already know, in your own words")
     p_build.add_argument("--ground", action="store_true",
                          help="look up and cite versioned sources before writing "
                               "(the only stage that reaches the network)")

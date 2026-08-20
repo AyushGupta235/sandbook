@@ -121,7 +121,37 @@ def test_probe_instructions_split_by_outcome() -> str:
     return "correct drops, wrong expands and carries its question, unknown ids ignored"
 
 
+def test_levels_differ_in_kind() -> str:
+    """A level has to change the brief, not just the module count."""
+    seen = set()
+    for name in pipeline.LEVELS:
+        text = pipeline.level_text(name)
+        check(name in text, f"{name} does not name itself in its brief")
+        check("Assume:" in text and "Aim at:" in text,
+              f"{name} states no assumption or target")
+        seen.add(pipeline.LEVELS[name]["targets"])
+    check(len(seen) == len(pipeline.LEVELS),
+          "two levels share a target, so they would produce the same lesson")
+
+    expert = pipeline.level_text("expert")
+    orientation = pipeline.level_text("orientation")
+    check("counterintuitive" in expert, "expert should aim at what is counterintuitive")
+    check("only heard the name" in orientation, "orientation should assume no prior use")
+    check("not about how many" in pipeline.level_text("deep"),
+          "every level should say depth is not a padding knob")
+
+    # An unknown level falls back rather than raising: a typo should not stop a build.
+    check(pipeline.DEFAULT_LEVEL in pipeline.level_text("nonsense"),
+          "an unknown level should fall back to the default")
+
+    with_assume = pipeline.level_text("working", "I use Kubernetes daily, never Helm")
+    check("never Helm" in with_assume, "the reader's own words are missing")
+    check("outranks" in with_assume, "--assume must be stated as outranking the level")
+    return "each level assumes and targets something different; --assume outranks it"
+
+
 TESTS = [
+    ("levels differ in kind, not just size", test_levels_differ_in_kind),
     ("records both outcomes", test_records_both_outcomes),
     ("entries expire", test_entries_expire),
     ("survives a corrupt file", test_survives_a_corrupt_file),
