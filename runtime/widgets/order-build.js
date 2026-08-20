@@ -19,7 +19,7 @@
 // order.fn returns {order: [id...], constraints: [[before, after], ...]}
 
 import { resolveArgs } from "../bind.js";
-import { h } from "../render.js";
+import { renderView, h } from "../render.js";
 
 export function mount(body, config, ctx) {
   const items = config.items || [];
@@ -80,6 +80,9 @@ export function mount(body, config, ctx) {
   const submit = h("button", { class: "primary", type: "button", text: "Check the order" });
   const reset = h("button", { class: "secondary", type: "button", text: "Start over" });
   const verdict = h("div", {});
+  // Shown only once they have solved it. Seeing the structure beforehand would
+  // hand over the answer, since the whole question is what depends on what.
+  const reveal = h("div", { class: "reveal", hidden: "" });
 
   body.appendChild(h("div", { class: "order-columns" }, [
     h("div", {}, [h("h4", { class: "order-heading", text: "Steps" }), pool]),
@@ -87,6 +90,7 @@ export function mount(body, config, ctx) {
   ]));
   body.appendChild(h("div", { class: "button-row" }, [submit, reset]));
   body.appendChild(verdict);
+  body.appendChild(reveal);
 
   reset.addEventListener("click", () => {
     sequence = [];
@@ -114,6 +118,12 @@ export function mount(body, config, ctx) {
           h("strong", { text: "That order works." }),
           h("span", { text: config.explanation || "" }),
         ]));
+        if (config.view) {
+          const view = await ctx.py.call(config.view.fn,
+                                         resolveArgs(config.view.args, { params: {} }));
+          reveal.replaceChildren(renderView(view));
+          reveal.hidden = false;
+        }
       } else {
         // Name one broken dependency rather than all of them. Listing every
         // violation hands over the answer; one is enough to think with.

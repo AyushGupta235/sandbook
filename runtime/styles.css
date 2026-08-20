@@ -707,6 +707,42 @@ td.cell-recomputed { background: var(--bad-soft); color: var(--bad); }
 }
 .diff-code code { font-family: var(--mono); font-size: 0.82rem; white-space: pre; }
 
+/* ------------------------------------------------- graph and timeline */
+
+.graph-chart, .timeline-chart { width: 100%; height: auto; margin: 0 auto; }
+
+.graph-node rect {
+  fill: var(--surface-2);
+  stroke: var(--line);
+  stroke-width: 1;
+}
+.graph-node text {
+  fill: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.graph-node.on rect { fill: var(--accent-soft); stroke: var(--accent); }
+.graph-node.on text { fill: var(--text); }
+.graph-node.cyclic rect { stroke: var(--warn, #c98a3a); stroke-dasharray: 4 3; }
+.graph-edge {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 1.4;
+}
+.graph-edge.on { stroke: var(--accent); stroke-width: 2; }
+.graph-arrow { fill: var(--line); }
+
+.timeline-span rect { fill: var(--surface-2); stroke: var(--line); }
+.timeline-span.state-active rect { fill: var(--accent-soft); stroke: var(--accent); }
+.timeline-span.state-ok rect { fill: var(--ok-soft); stroke: var(--ok); }
+.timeline-span.state-wait rect { fill: transparent; stroke-dasharray: 4 3; }
+.timeline-span.state-bad rect { fill: var(--bad-soft, #3a1f1f); stroke: var(--bad, #c96a6a); }
+.timeline-label {
+  fill: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 10.5px;
+}
+
 @media (max-width: 620px) {
   .param { grid-template-columns: 1fr auto; }
   .param label { grid-column: 1 / -1; }

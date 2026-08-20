@@ -405,8 +405,76 @@ def mut_diff_none_fix(lesson, model):
     return lesson, model
 
 
+# ------------------------------------ mutations: graph and timeline views --
+
+
+def mut_graph_dangling_edge(lesson, model):
+    """An edge to a node the graph never declares would draw into nothing."""
+    return lesson, model + (
+        "\n\n_orig_graph_view = rollout_graph_view\n"
+        "def rollout_graph_view(step):\n"
+        "    v = _orig_graph_view(step)\n"
+        "    v['edges'] = v['edges'] + [['edit', 'no-such-event']]\n"
+        "    return v\n"
+    )
+
+
+def mut_graph_duplicate_ids(lesson, model):
+    """Two nodes with one id makes every edge to it ambiguous."""
+    return lesson, model + (
+        "\n\n_orig_graph_view2 = rollout_graph_view\n"
+        "def rollout_graph_view(step):\n"
+        "    v = _orig_graph_view2(step)\n"
+        "    v['nodes'] = v['nodes'] + [{'id': 'edit', 'label': 'spec edited again'}]\n"
+        "    return v\n"
+    )
+
+
+def mut_graph_lies_about_cycles(lesson, model):
+    """Claim the graph is acyclic while drawing a cycle in it.
+
+    Worth catching because the lesson is *about* dependency structure: drawing
+    a cycle while asserting there is none teaches the wrong thing about the
+    exact picture the learner is looking at.
+    """
+    return lesson, model + (
+        "\n\n_orig_graph_view3 = rollout_graph_view\n"
+        "def rollout_graph_view(step):\n"
+        "    v = _orig_graph_view3(step)\n"
+        "    v['edges'] = v['edges'] + [['endpoint-remove', 'edit']]\n"
+        "    return v\n"
+    )
+
+
+def mut_timeline_backwards_span(lesson, model):
+    """A span that ends before it starts would draw backwards."""
+    return lesson, model + (
+        "\n\n_orig_timeline = rollout_timeline_view\n"
+        "def rollout_timeline_view(replicas, max_surge, max_unavailable, readiness_delay_s):\n"
+        "    v = _orig_timeline(replicas, max_surge, max_unavailable, readiness_delay_s)\n"
+        "    v['lanes'][0]['spans'][0]['end'] = v['lanes'][0]['spans'][0]['start'] - 5\n"
+        "    return v\n"
+    )
+
+
+def mut_timeline_unlabelled_lane(lesson, model):
+    """An unlabelled row on a timeline says nothing about what it tracks."""
+    return lesson, model + (
+        "\n\n_orig_timeline2 = rollout_timeline_view\n"
+        "def rollout_timeline_view(replicas, max_surge, max_unavailable, readiness_delay_s):\n"
+        "    v = _orig_timeline2(replicas, max_surge, max_unavailable, readiness_delay_s)\n"
+        "    v['lanes'][0].pop('label', None)\n"
+        "    return v\n"
+    )
+
+
 SUITES = [
     (ORDER_LESSON, [
+        ("graph edge to an undeclared node", mut_graph_dangling_edge,   "does not declare"),
+        ("two graph nodes share an id",      mut_graph_duplicate_ids,   "duplicate node id"),
+        ("graph claims acyclic but is not",  mut_graph_lies_about_cycles, "declares itself acyclic"),
+        ("timeline span ends before it starts", mut_timeline_backwards_span, "before it starts"),
+        ("timeline lane has no label",       mut_timeline_unlabelled_lane, "needs a 'label'"),
         ("goal already met at defaults",   mut_hunt_already_met,      "already met at the default"),
         ("goal met nowhere in the space",  mut_hunt_unreachable,      "not there"),
         ("goal returns no verdict",        mut_hunt_wrong_shape,      "boolean 'met'"),

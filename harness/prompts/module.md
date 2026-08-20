@@ -30,10 +30,22 @@ The runtime does the drawing.
 | `grid` | `cells` | row and column label counts must match the cells |
 | `scalars` | `items[].value` | readouts and summary numbers |
 | `text` | `text` | a paragraph produced by a function |
+| `graph` | `nodes[].id`, `edges` | dependency structure; edges are `[from, to]` pairs of node ids |
+| `timeline` | `lanes[].label`, `lanes[].spans[].start/end` | events over time, one lane per actor |
 | `stack` | `panels` | composes any of the above |
 
 Optional anywhere: `caption`, `x_label`, `y_label`, `y_min`, `y_max`,
 `highlight` (indices), `value_format` (`"d"`, `".3f"`, `".1%"`).
+
+`graph` is the right choice whenever the subject *is* the structure: what
+depends on what, what gates what, what runs in parallel. Levels are computed
+from the edges, so you supply the relationships and not the positions. Set
+`"acyclic": true` when the graph should have no cycles and the verifier will
+hold you to it. Use `highlight` to mark progress or a path.
+
+`timeline` suits anything where the answer is "when", and especially where a
+cost is paid repeatedly: retry backoff, rollout waves, event history. Give each
+span a `state` (`active`, `ok`, `wait`, `bad`) so its colour carries meaning.
 
 Captions carry a lot of this lesson's teaching. Write them as sentences that
 say what the learner is looking at and why it matters.

@@ -36,7 +36,8 @@ TIMEOUT_S = 120
 
 WIDGET_TYPES = {"param-playground", "predict-reveal", "step-sim", "code-cell",
                 "order-build", "bug-hunt", "param-hunt", "calc-widget", "diff-apply"}
-VIEW_KINDS = {"bars", "lines", "grid", "scalars", "text", "stack"}
+VIEW_KINDS = {"bars", "lines", "grid", "graph", "timeline",
+              "scalars", "text", "stack"}
 
 # House style, enforced rather than requested. The prompts ask for this too, but
 # a prompt is a request and a check is a guarantee, and asking alone did not
@@ -142,6 +143,26 @@ def is_num(v) -> bool:
     return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
 
 
+def _has_cycle(ids: list, edges: list) -> bool:
+    """Kahn's algorithm, only to answer whether an order exists at all."""
+    indegree = {i: 0 for i in ids}
+    after: dict = {i: [] for i in ids}
+    for e in edges:
+        if isinstance(e, (list, tuple)) and len(e) == 2 and e[0] in after and e[1] in indegree:
+            after[e[0]].append(e[1])
+            indegree[e[1]] += 1
+    ready = [i for i in ids if indegree[i] == 0]
+    seen = 0
+    while ready:
+        node = ready.pop()
+        seen += 1
+        for nxt in after[node]:
+            indegree[nxt] -= 1
+            if indegree[nxt] == 0:
+                ready.append(nxt)
+    return seen != len(ids)
+
+
 def check_view(view, where: str, f: Findings) -> None:
     """A view is the only thing generated code is allowed to draw with, so its
     shape is checked strictly. A labels/values length mismatch silently
@@ -194,6 +215,57 @@ def check_view(view, where: str, f: Findings) -> None:
                 f.error(where, f"series[{si}] has non-finite values at indices {bad[:5]}")
             if not s.get("label"):
                 f.warn(where, f"series[{si}] has no label")
+
+    elif kind == "graph":
+        nodes = view.get("nodes")
+        edges = view.get("edges")
+        if not isinstance(nodes, list) or not nodes:
+            f.error(where, "graph view needs a non-empty 'nodes' list")
+            return
+        ids = [n.get("id") for n in nodes if isinstance(n, dict)]
+        if len(ids) != len(nodes) or not all(ids):
+            f.error(where, "every graph node needs an 'id'")
+            return
+        if len(set(ids)) != len(ids):
+            dupes = sorted({i for i in ids if ids.count(i) > 1})
+            f.error(where, f"duplicate node id(s) {dupes}; edges to them are ambiguous")
+        if not isinstance(edges, list):
+            f.error(where, "graph view needs an 'edges' list, even if empty")
+            return
+        known = set(ids)
+        for i, e in enumerate(edges):
+            if not (isinstance(e, (list, tuple)) and len(e) == 2):
+                f.error(where, f"edges[{i}] is not a [from, to] pair")
+            elif e[0] not in known or e[1] not in known:
+                f.error(where, f"edges[{i}] {list(e)} names a node the graph does not declare, "
+                               "so it would be drawn pointing at nothing")
+        for node_id in view.get("highlight", []) or []:
+            if node_id not in known:
+                f.error(where, f"highlight names {node_id!r}, which is not a node")
+        # A lesson that says its graph is acyclic and then draws a cycle is
+        # teaching the wrong thing about the very structure it is showing.
+        if view.get("acyclic") and _has_cycle(ids, edges):
+            f.error(where, "the graph declares itself acyclic but contains a cycle")
+
+    elif kind == "timeline":
+        lanes = view.get("lanes")
+        if not isinstance(lanes, list) or not lanes:
+            f.error(where, "timeline view needs a non-empty 'lanes' list")
+            return
+        for li, lane in enumerate(lanes):
+            if not isinstance(lane, dict) or not lane.get("label"):
+                f.error(where, f"lanes[{li}] needs a 'label'; an unlabelled row means nothing")
+                continue
+            spans = lane.get("spans")
+            if not isinstance(spans, list):
+                f.error(where, f"lanes[{li}] needs a 'spans' list")
+                continue
+            for si, s in enumerate(spans):
+                if not isinstance(s, dict) or not is_num(s.get("start")) or not is_num(s.get("end")):
+                    f.error(where, f"lanes[{li}].spans[{si}] needs finite 'start' and 'end'")
+                elif s["end"] < s["start"]:
+                    f.error(where, f"lanes[{li}].spans[{si}] ends at {s['end']} before it "
+                                   f"starts at {s['start']}, so it would draw backwards")
 
     elif kind == "grid":
         cells = view.get("cells")
@@ -545,6 +617,11 @@ def verify_lesson(slug: str, lessons_dir: pathlib.Path | None = None) -> Finding
                         "args": resolve_args(order.get("args"), {}, where, set(), f)})
             plan.append({"kind": "ordering", "where": where, "ids": ids,
                          "listed": [it.get("id") for it in items if isinstance(it, dict)]})
+            if (widget.get("view") or {}).get("fn"):
+                v = widget["view"]
+                ops.append({"op": "call", "fn": v["fn"],
+                            "args": resolve_args(v.get("args"), {}, where, set(), f)})
+                plan.append({"kind": "view", "where": f"{where} reveal view"})
 
         elif wtype == "step-sim":
             init, step, view = widget.get("init"), widget.get("step"), widget.get("view")

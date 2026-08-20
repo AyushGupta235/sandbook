@@ -90,7 +90,15 @@
           "fn": "rollout_order",
           "args": {}
         },
-        "explanation": "The one that catches people: the old pod cannot be terminated until the new one is in endpoints, and it only enters endpoints once readiness passes. Readiness is the gate the whole rollout hangs on."
+        "explanation": "The one that catches people: the old pod cannot be terminated until the new one is in endpoints, and it only enters endpoints once readiness passes. Readiness is the gate the whole rollout hangs on.",
+        "view": {
+          "fn": "rollout_graph_view",
+          "args": {
+            "step": {
+              "const": 7
+            }
+          }
+        }
       }
     },
     {
@@ -368,7 +376,7 @@
           }
         },
         "working": {
-          "fn": "rollout_duration_view",
+          "fn": "rollout_timeline_view",
           "args": {
             "replicas": {
               "const": 50

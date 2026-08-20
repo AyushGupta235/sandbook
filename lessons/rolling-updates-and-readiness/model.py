@@ -264,3 +264,79 @@ def rollout_duration_view(replicas, max_surge, max_unavailable, readiness_delay_
                     "The readiness delay is multiplied by the wave count, which is why a "
                     "conservative surge setting is expensive on a large deployment."),
     }
+
+
+# ------------------------------------------------------ rollout as a picture
+
+
+def rollout_graph_view(step):
+    """The rollout as a dependency graph, with progress marked.
+
+    The same seven events the ordering module asks about, drawn as what they
+    actually are. Reading the constraints as a shape makes the gate obvious:
+    everything funnels through the readiness probe.
+    """
+    step = int(step)
+    spec = rollout_order()
+    reached = spec["order"][:step]
+    labels = {
+        "edit": "spec edited",
+        "new-rs": "ReplicaSet created",
+        "surge-pod": "surge pod starts",
+        "probe-pass": "readiness passes",
+        "endpoint-add": "joins endpoints",
+        "old-terminate": "old pod stops",
+        "endpoint-remove": "leaves endpoints",
+    }
+    return {
+        "kind": "graph",
+        "acyclic": True,
+        "nodes": [{"id": i, "label": labels[i]} for i in spec["order"]],
+        "edges": spec["constraints"],
+        "highlight": reached,
+        "caption": (
+            f"{len(reached)} of {len(spec['order'])} events done. Every path runs through "
+            "readiness: nothing joins endpoints before the probe passes, and no old pod "
+            "stops before something has joined."
+        ),
+    }
+
+
+def rollout_timeline_view(replicas, max_surge, max_unavailable, readiness_delay_s):
+    """Wave by wave, in seconds, so the cost of a small surge is visible."""
+    b = rollout_batches(replicas, max_surge, max_unavailable)
+    delay = int(readiness_delay_s)
+    replicas = int(replicas)
+
+    lanes = []
+    placed = 0
+    for wave in range(b["waves"]):
+        in_wave = min(b["per_wave"], replicas - placed)
+        start = wave * delay
+        lanes.append({
+            "label": f"wave {wave + 1} ({in_wave} pod{'s' if in_wave != 1 else ''})",
+            "spans": [
+                {"start": start, "end": start + delay,
+                 "label": "starting, waiting for readiness", "state": "wait"},
+                {"start": start + delay, "end": start + delay + 1,
+                 "label": "ready", "state": "ok"},
+            ],
+        })
+        placed += in_wave
+        if len(lanes) >= 12:      # a readable picture beats a complete one
+            break
+
+    total = b["waves"] * delay
+    return {
+        "kind": "timeline",
+        "unit": "s",
+        "start": 0,
+        "end": total + 1,
+        "lanes": lanes,
+        "value_format": "d",
+        "caption": (
+            f"{b['waves']} waves of {b['per_wave']}, {delay}s each, {total}s in total"
+            + (" (first 12 waves shown)" if b["waves"] > 12 else "")
+            + ". The readiness delay is paid once per wave, not once per rollout."
+        ),
+    }
