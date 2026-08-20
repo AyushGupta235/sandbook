@@ -443,7 +443,20 @@ def _write_index(base: pathlib.Path) -> None:
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
-    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(ROOT))
+    class NoCache(http.server.SimpleHTTPRequestHandler):
+        """Serve without caching.
+
+        This is a development server for files being edited. Browsers cache ES
+        modules hard, so a widget added to the shell keeps rendering as
+        "unknown widget type" until the cache is cleared, which reads exactly
+        like a registration bug and is not one.
+        """
+
+        def end_headers(self):
+            self.send_header("Cache-Control", "no-store, must-revalidate")
+            super().end_headers()
+
+    handler = functools.partial(NoCache, directory=str(ROOT))
 
     class Server(socketserver.TCPServer):
         allow_reuse_address = True

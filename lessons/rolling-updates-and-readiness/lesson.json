@@ -431,6 +431,25 @@
         ],
         "explanation": "Readiness alone is not enough and neither is Running. A pod leaves endpoints the moment it starts terminating, which is what gives in-flight requests somewhere to finish, and the probe cannot be trusted on a pod that is not Running yet."
       }
+    },
+    {
+      "id": "shape",
+      "title": "Draw How It Scales",
+      "prose": "You worked out one point on a curve: 50 replicas at `maxSurge: 2` takes 375 seconds. Now predict the whole curve.\n\nThe x-axis is `maxSurge` from 1 to 10, the y-axis is total rollout time, with the same 50 replicas and 15 second readiness delay. Drag the points to draw the shape you expect before you look.\n\nOnly the shape is judged, not the numbers, so do not worry about the scale.",
+      "widget": {
+        "type": "predict-curve",
+        "title": "Rollout time against maxSurge",
+        "task": "Drag the points into the shape you expect, then commit.",
+        "x_label": "maxSurge (pods)",
+        "y_label": "total rollout time",
+        "points": 10,
+        "tolerance": 0.12,
+        "curve": {
+          "fn": "rollout_duration_curve",
+          "args": {}
+        },
+        "explanation": "Time is ceil(replicas / surge) waves, so it falls like 1/surge, not linearly. Going from surge 1 to 2 halves it, from 2 to 4 nearly halves it again, and past about 5 the curve is almost flat: more surge buys very little time while costing headroom on every node in the cluster."
+      }
     }
   ]
 }

@@ -35,7 +35,8 @@ RUNNER = ROOT / "verifier" / "runner.py"
 TIMEOUT_S = 120
 
 WIDGET_TYPES = {"param-playground", "predict-reveal", "step-sim", "code-cell",
-                "order-build", "bug-hunt", "param-hunt", "calc-widget", "diff-apply"}
+                "order-build", "bug-hunt", "param-hunt", "calc-widget", "diff-apply",
+                "predict-curve"}
 VIEW_KINDS = {"bars", "lines", "grid", "graph", "timeline",
               "scalars", "text", "stack"}
 
@@ -480,6 +481,19 @@ def verify_lesson(slug: str, lessons_dir: pathlib.Path | None = None) -> Finding
                             "args": resolve_args(v.get("args"), {}, where, set(), f)})
                 plan.append({"kind": "view", "where": f"{where} reveal view"})
 
+        elif wtype == "predict-curve":
+            curve = widget.get("curve") or {}
+            if not curve.get("fn"):
+                f.error(where, "predict-curve needs curve.fn; the shape is computed, "
+                               "not written into the config")
+                continue
+            tol = widget.get("tolerance", 0.12)
+            if not is_num(tol) or not (0 < tol < 1):
+                f.error(where, f"tolerance must be between 0 and 1, got {tol!r}")
+            ops.append({"op": "call", "fn": curve["fn"],
+                        "args": resolve_args(curve.get("args"), {}, where, set(), f)})
+            plan.append({"kind": "curve", "where": where, "tolerance": tol})
+
         elif wtype == "calc-widget":
             answer = widget.get("answer") or {}
             if not answer.get("fn"):
@@ -779,6 +793,37 @@ def verify_lesson(slug: str, lessons_dir: pathlib.Path | None = None) -> Finding
             state = res.get("result")
             if isinstance(state, dict) and state.get("done") and meta["widget"] not in sim_done:
                 sim_done[meta["widget"]] = meta["index"]
+
+        elif kind == "curve":
+            result = res.get("result")
+            xs = (result or {}).get("x") if isinstance(result, dict) else None
+            ys = (result or {}).get("y") if isinstance(result, dict) else None
+            if not isinstance(ys, list) or len(ys) < 3:
+                f.error(where, "curve.fn must return {'x': [...], 'y': [...]} with at "
+                               "least three points")
+                continue
+            if isinstance(xs, list) and len(xs) != len(ys):
+                f.error(where, f"the curve has {len(xs)} x values and {len(ys)} y values")
+                continue
+            if any(not is_num(v) for v in ys):
+                f.error(where, "the curve has non-finite y values")
+                continue
+            lo, hi = min(ys), max(ys)
+            if hi == lo:
+                f.error(where, "the curve is flat, so there is no shape to predict")
+                continue
+            # The check that makes this scoreable: if the true shape is within
+            # tolerance of a straight line between its endpoints, then leaving
+            # the default alone and drawing nothing passes, and the exercise
+            # asks the learner for nothing.
+            unit = [(v - lo) / (hi - lo) for v in ys]
+            n = len(unit)
+            straight = [unit[0] + (unit[-1] - unit[0]) * i / (n - 1) for i in range(n)]
+            distance = sum(abs(a - b) for a, b in zip(unit, straight)) / n
+            if distance <= meta["tolerance"]:
+                f.error(where, f"the curve is within {distance:.3f} of a straight line and "
+                               f"the tolerance is {meta['tolerance']}, so a learner who draws "
+                               "a straight line is marked correct and the question asks nothing")
 
         elif kind == "calc-answer":
             v = res.get("result")

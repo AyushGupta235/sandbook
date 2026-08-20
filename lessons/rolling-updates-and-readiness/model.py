@@ -340,3 +340,21 @@ def rollout_timeline_view(replicas, max_surge, max_unavailable, readiness_delay_
             + ". The readiness delay is paid once per wave, not once per rollout."
         ),
     }
+
+
+# ------------------------------------------------- how duration scales
+
+
+def rollout_duration_curve():
+    """Total rollout time against maxSurge, for a fixed 50-replica deployment.
+
+    Deliberately the shape people get wrong. Doubling the surge does not halve
+    the time twice over: waves are ceil(replicas / surge), so the curve falls
+    steeply at first and then flattens, and past a point more surge buys almost
+    nothing while costing headroom on every node.
+    """
+    surges = list(range(1, 11))
+    return {
+        "x": surges,
+        "y": [rollout_duration_s(50, s, 0, 15) for s in surges],
+    }

@@ -44,7 +44,8 @@ MAX_REPAIR_ROUNDS = 3
 MODULE_BUILD_ATTEMPTS = 2   # a reply in the wrong shape earns one more ask
 
 WIDGET_TYPES = {"param-playground", "predict-reveal", "step-sim", "code-cell",
-                "order-build", "bug-hunt", "param-hunt", "calc-widget", "diff-apply"}
+                "order-build", "bug-hunt", "param-hunt", "calc-widget", "diff-apply",
+                "predict-curve"}
 
 
 # ----------------------------------------------------------------- rendering
@@ -863,7 +864,7 @@ REVIEW_SCHEMA = {
 def widget_functions(widget: dict) -> list[str]:
     """Every model function a widget names directly."""
     names = []
-    for key in ("view", "check", "init", "step", "grade", "order"):
+    for key in ("view", "check", "init", "step", "grade", "order", "curve"):
         fn = (widget.get(key) or {}).get("fn")
         if fn:
             names.append(fn)

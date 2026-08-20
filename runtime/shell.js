@@ -16,6 +16,7 @@ import * as bugHunt from "./widgets/bug-hunt.js";
 import * as paramHunt from "./widgets/param-hunt.js";
 import * as calcWidget from "./widgets/calc-widget.js";
 import * as diffApply from "./widgets/diff-apply.js";
+import * as predictCurve from "./widgets/predict-curve.js";
 
 const WIDGETS = {
   "param-playground": paramPlayground,
@@ -27,6 +28,7 @@ const WIDGETS = {
   "param-hunt": paramHunt,
   "calc-widget": calcWidget,
   "diff-apply": diffApply,
+  "predict-curve": predictCurve,
 };
 
 // Lessons live in ../lessons; freshly generated drafts live in ../output and

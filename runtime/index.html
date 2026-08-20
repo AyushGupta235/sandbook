@@ -15,6 +15,12 @@
 <main id="main" class="main">
   <p class="loading">Loading…</p>
 </main>
-<script type="module" src="./shell.js"></script>
+<!-- Imported dynamically with a cache-buster. Browsers cache ES modules hard
+     enough that editing a widget and reloading keeps running the old graph,
+     which shows up as "unknown widget type" for a widget that is registered
+     correctly. This is a local development tool, so always take the newest. -->
+<script type="module">
+  import(`./shell.js?v=${Date.now()}`);
+</script>
 </body>
 </html>

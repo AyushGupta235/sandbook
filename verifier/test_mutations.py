@@ -468,8 +468,49 @@ def mut_timeline_unlabelled_lane(lesson, model):
     )
 
 
+# ----------------------------------------------- mutations: predict-curve --
+
+
+def mut_curve_is_a_straight_line(lesson, model):
+    """A curve indistinguishable from a straight line asks the learner nothing.
+
+    The widget starts flat, so if the true shape is within tolerance of a
+    straight line, drawing nothing at all is marked correct.
+    """
+    return lesson, model + (
+        "\n\ndef rollout_duration_curve():\n"
+        "    return {'x': list(range(1, 11)), 'y': [100 - 5 * s for s in range(1, 11)]}\n"
+    )
+
+
+def mut_curve_is_flat(lesson, model):
+    """No variation at all, so there is no shape to predict."""
+    return lesson, model + (
+        "\n\ndef rollout_duration_curve():\n"
+        "    return {'x': list(range(1, 11)), 'y': [375] * 10}\n"
+    )
+
+
+def mut_curve_too_short(lesson, model):
+    """Two points are a line segment, not a shape."""
+    return lesson, model + (
+        "\n\ndef rollout_duration_curve():\n"
+        "    return {'x': [1, 2], 'y': [750, 375]}\n"
+    )
+
+
+def mut_curve_tolerance_absurd(lesson, model):
+    """A tolerance of 1 accepts literally any drawing."""
+    find_widget(lesson, "predict-curve")["tolerance"] = 1.0
+    return lesson, model
+
+
 SUITES = [
     (ORDER_LESSON, [
+        ("curve is a straight line",     mut_curve_is_a_straight_line, "straight line"),
+        ("curve is flat",                mut_curve_is_flat,            "no shape to predict"),
+        ("curve has too few points",     mut_curve_too_short,          "at least three points"),
+        ("curve tolerance accepts anything", mut_curve_tolerance_absurd, "between 0 and 1"),
         ("graph edge to an undeclared node", mut_graph_dangling_edge,   "does not declare"),
         ("two graph nodes share an id",      mut_graph_duplicate_ids,   "duplicate node id"),
         ("graph claims acyclic but is not",  mut_graph_lies_about_cycles, "declares itself acyclic"),

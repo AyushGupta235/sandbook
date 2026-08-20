@@ -750,3 +750,32 @@ td.cell-recomputed { background: var(--bad-soft); color: var(--bad); }
   .order-columns { grid-template-columns: 1fr; }
   .bug-listing { overflow-x: auto; }
 }
+
+/* ---------------------------------------------------------- predict-curve */
+
+.curve-chart {
+  width: 100%;
+  height: auto;
+  margin: 12px auto;
+  display: block;
+  touch-action: none;      /* dragging draws, it does not scroll the page */
+  cursor: crosshair;
+}
+.curve-drawn {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+.curve-handle {
+  fill: var(--accent);
+  stroke: var(--surface);
+  stroke-width: 1.5;
+}
+.curve-truth {
+  fill: none;
+  stroke: var(--ok);
+  stroke-width: 2.5;
+  stroke-dasharray: 6 4;
+  stroke-linejoin: round;
+}
