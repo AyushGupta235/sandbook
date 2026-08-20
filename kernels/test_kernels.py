@@ -175,8 +175,94 @@ def test_kv_cache_bytes() -> str:
     return "zero at empty, linear in each factor, GQA is exactly 1/4 of MHA"
 
 
+def test_dag_order() -> str:
+    ref = kernels.load("dag_order").reference
+
+    for probe in kernels.load("dag_order").PROBES:
+        r = ref(**probe)
+        if r["has_cycle"]:
+            check(r["order"] == [], f"a cyclic graph still returned an order for {probe}")
+            check(bool(r["in_cycle"]), "a cycle was reported with no nodes named")
+            continue
+        # The defining property: every edge is respected.
+        pos = {n: i for i, n in enumerate(r["order"])}
+        check(sorted(r["order"]) == sorted(probe["nodes"]),
+              f"the order is not a permutation of the nodes for {probe}")
+        for a, b in probe["edges"]:
+            check(pos[a] < pos[b], f"edge {a} -> {b} was violated in {r['order']}")
+        # Reversing a valid apply order is a valid destroy order.
+        rpos = {n: i for i, n in enumerate(reversed(r["order"]))}
+        for a, b in probe["edges"]:
+            check(rpos[b] < rpos[a], f"reversed order broke {a} -> {b}")
+
+    # Levels are the longest chain, not merely a valid layering.
+    diamond = ref(nodes=["vpc", "sg", "subnet", "instance"],
+                  edges=[["vpc", "sg"], ["vpc", "subnet"],
+                         ["sg", "instance"], ["subnet", "instance"]])
+    check(diamond["levels"] == {"vpc": 0, "sg": 1, "subnet": 1, "instance": 2},
+          f"diamond levels wrong: {diamond['levels']}")
+    check(diamond["width"] == 2, f"diamond width should be 2, got {diamond['width']}")
+
+    check(ref(nodes=["a", "b", "c"], edges=[])["width"] == 3,
+          "three independent nodes can all be worked at once")
+
+    # A self-edge is the smallest cycle and must be caught.
+    loop = ref(nodes=["a", "b"], edges=[["a", "a"], ["a", "b"]])
+    check(loop["has_cycle"] and "a" in loop["in_cycle"],
+          f"a self-dependency is a cycle: {loop}")
+
+    try:
+        ref(nodes=["a"], edges=[["a", "ghost"]])
+        raise Failure("an edge to an unknown node should raise")
+    except ValueError:
+        pass
+    return "edges respected, reverse is a valid destroy order, levels and cycles correct"
+
+
+def test_scheduler_fit() -> str:
+    ref = kernels.load("scheduler_fit").reference
+    nodes = [{"name": "node-a", "cpu_m": 4000, "mem_mi": 8192},
+             {"name": "node-b", "cpu_m": 4000, "mem_mi": 8192},
+             {"name": "node-c", "cpu_m": 4000, "mem_mi": 8192}]
+
+    # The fragmentation case: 3000m free on every node, 6000m free in total,
+    # and a 2000m pod that cannot run because capacity does not pool.
+    r = ref(nodes=nodes, pods=[{"name": "a", "cpu_m": 3000, "mem_mi": 2048},
+                               {"name": "b", "cpu_m": 3000, "mem_mi": 2048},
+                               {"name": "c", "cpu_m": 3000, "mem_mi": 2048},
+                               {"name": "batch", "cpu_m": 2000, "mem_mi": 1024}])
+    check(r["pending"] == ["batch"], f"expected only batch to be pending, got {r['pending']}")
+    check(r["free_cpu_m"] == 3000, f"cluster should have 3000m free, got {r['free_cpu_m']}")
+    check(r["stranded"] is True, "a pod pending while the cluster has room is stranded")
+    check(r["unschedulable"] == [], "batch would fit an empty node, so it is not unschedulable")
+
+    # Exact fit is a fit; one unit more is not.
+    tiny = [{"name": "only", "cpu_m": 1000, "mem_mi": 1024}]
+    check(ref(nodes=tiny, pods=[{"name": "exact", "cpu_m": 1000, "mem_mi": 1024}])["pending"] == [],
+          "a pod that exactly fills a node must be placed")
+    check(ref(nodes=tiny, pods=[{"name": "over", "cpu_m": 1001, "mem_mi": 1024}])["pending"] == ["over"],
+          "one millicore over must not be placed")
+
+    # Memory can bind while cpu is nearly untouched.
+    mem_bound = ref(nodes=nodes, pods=[{"name": f"c{i}", "cpu_m": 100, "mem_mi": 8000}
+                                       for i in range(4)])
+    check(len(mem_bound["pending"]) == 1, f"memory should bind here: {mem_bound}")
+    check(mem_bound["free_cpu_m"] > 11000, "cpu should be almost entirely free")
+
+    # A pod bigger than any node never becomes schedulable.
+    huge = ref(nodes=nodes, pods=[{"name": "huge", "cpu_m": 9000, "mem_mi": 1024}])
+    check(huge["unschedulable"] == ["huge"], f"expected huge to be unschedulable: {huge}")
+    check(huge["stranded"] is False,
+          "a pod too large for any node is not stranded by fragmentation")
+
+    check(ref(nodes=nodes, pods=[])["placements"] == {}, "no pods means no placements")
+    return "fragmentation, exact fits, memory binding, and permanently unschedulable pods"
+
+
 TESTS = [
     ("every kernel satisfies the contract", test_contract),
+    ("dag_order", test_dag_order),
+    ("scheduler_fit", test_scheduler_fit),
     ("softmax", test_softmax),
     ("retry_backoff", test_retry_backoff),
     ("kv_cache_bytes", test_kv_cache_bytes),
