@@ -112,7 +112,7 @@ are all essentially charts, and several topics have been squeezed into a `grid`
 because nothing better existed. Three new kinds, ranked by how many lessons
 need them.
 
-### `graph` — the biggest gap
+### `graph`, the biggest gap
 
 Nodes and edges with automatic layout. Dependency structure is the *subject* of
 half the infra library and there is currently no way to draw it: the Terraform
@@ -135,7 +135,7 @@ Pairs with: `step-sim` (watch apply walk the graph, one resource at a time),
 Verifier: every edge references a declared node, no duplicate ids, the layout
 terminates, and a graph declaring itself acyclic actually is.
 
-### `timeline` — lanes and spans
+### `timeline`, lanes and spans
 
 Rollout waves, retry schedules with backoff, Temporal event history, request
 lifecycle, scheduling over time. All currently faked with grids.
@@ -152,7 +152,7 @@ then see the timeline that produces it).
 Verifier: spans have `end >= start`, lanes are labelled, no span escapes the
 declared window.
 
-### `heatmap` — a continuous scale over a matrix
+### `heatmap`, a continuous scale over a matrix
 
 `grid` shows discrete cells; attention matrices, cache access patterns and
 utilisation maps need a continuous colour scale with a legend and a stated
