@@ -1,6 +1,10 @@
 """sandbook command line entry point.
 
+    sandbook plan "<topic>"     design the outline and stop, before the costly part
+    sandbook plan --edit <slug> revise a saved outline module by module
+    sandbook probe <slug>       test what you know, and reshape the outline around it
     sandbook build "<topic>"    generate a lesson into output/
+    sandbook build --from-plan <slug>   build an outline you approved
     sandbook promote <slug>     move a reviewed lesson from output/ into lessons/
     sandbook serve              serve the runtime on localhost
     sandbook verify [slug]      run the contract verifier (all lessons by default)
@@ -223,6 +227,94 @@ def cmd_plan(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_probe(args: argparse.Namespace) -> int:
+    """Find out what the reader already knows, then reshape the outline."""
+    sys.path.insert(0, str(ROOT / "harness"))
+    from llm import AgentSDKModel, ModelAuthError, ModelError
+    import pipeline
+    import learner_profile as prof
+
+    model = AgentSDKModel()
+    try:
+        curriculum = pipeline.load_plan(OUTPUT, args.slug)
+        print(f"{curriculum['title']}: {len(curriculum['modules'])} modules planned")
+        print("  · writing questions\n", flush=True)
+        questions = pipeline.run_probe(model, curriculum)
+    except ModelAuthError as e:
+        print(f"\n{e}", file=sys.stderr)
+        return 2
+    except ModelError as e:
+        print(f"\n{e}", file=sys.stderr)
+        return 1
+
+    by_id = {m["id"]: m for m in curriculum["modules"]}
+    results, answered = [], 0
+    print("Answer honestly. Getting one wrong is the point: it is how the lesson")
+    print("finds what to spend its time on. Enter to skip a question.\n")
+
+    for i, q in enumerate(questions, 1):
+        print(f"  {i}. {q['question']}")
+        for j, option in enumerate(q["options"]):
+            print(f"       {chr(97 + j)}) {option}")
+        try:
+            answer = input("     > ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+        if not answer:
+            print()
+            continue
+        picked = ord(answer[0]) - 97 if answer[0].isalpha() else -1
+        correct = picked == q["answer_index"]
+        answered += 1
+        print(f"     {'correct' if correct else 'not quite'}. {q['why']}\n")
+        module = by_id.get(q["module_id"], {})
+        results.append({"module_id": q["module_id"], "question": q["question"],
+                        "misconception": module.get("misconception") or module.get("intent", ""),
+                        "correct": correct})
+
+    if not answered:
+        print("nothing answered, so the outline is unchanged")
+        return 0
+
+    right = sum(1 for r in results if r["correct"])
+    print(f"{right} of {answered} correct.")
+
+    if not args.no_profile:
+        path = prof.record(results, curriculum.get("_topic", args.slug))
+        print(f"recorded to {path}")
+
+    instructions = pipeline.probe_instructions(results, curriculum)
+    if not instructions:
+        print("nothing to change")
+        return 0
+
+    print("\n  · reshaping the outline around what you missed", flush=True)
+    try:
+        revised = pipeline.run_revise(model, curriculum, instructions)
+    except ModelError as e:
+        print(f"\nthe outline could not be revised: {e}", file=sys.stderr)
+        return 1
+
+    dropped = {m["id"] for m in curriculum["modules"]} - {m["id"] for m in revised["modules"]}
+    pipeline.save_plan(OUTPUT, revised)
+    print()
+    if revised.get("revision_note"):
+        print(f"  {revised['revision_note']}\n")
+    if dropped:
+        # Never silent. A module removed on this evidence is a module the
+        # reader never sees, so they get told which ones and why.
+        print("  dropped because you answered their question correctly:")
+        for mid in sorted(dropped):
+            print(f"    {mid}: {by_id[mid]['title']}")
+        print()
+    print(pipeline.outline_text(revised))
+    if getattr(model, "total_cost_usd", 0.0):
+        print(f"cost: ${model.total_cost_usd:.2f}")
+    print(f"build it: ./sandbook build --from-plan {revised['slug']}")
+    return 0
+
+
 def _collect_edits(curriculum: dict) -> str:
     """Walk the outline module by module and collect what the reader wants.
 
@@ -380,6 +472,7 @@ def cmd_selftest(_args: argparse.Namespace) -> int:
     measured against them is wrong too."""
     rc = subprocess.call([sys.executable, str(ROOT / "kernels" / "test_kernels.py")])
     rc |= subprocess.call([sys.executable, str(ROOT / "verifier" / "test_notes.py")])
+    rc |= subprocess.call([sys.executable, str(ROOT / "verifier" / "test_profile.py")])
     rc |= subprocess.call([sys.executable, str(ROOT / "verifier" / "test_mutations.py")])
     rc |= subprocess.call([sys.executable, str(ROOT / "verifier" / "test_pipeline.py")])
     return rc
@@ -415,6 +508,12 @@ def main(argv: list[str] | None = None) -> int:
                         help="look up and cite versioned sources first")
     p_plan.add_argument("--grounding", help="file of source material to design against")
     p_plan.set_defaults(func=cmd_plan)
+
+    p_probe = sub.add_parser("probe", help="test what you already know, and reshape the outline")
+    p_probe.add_argument("slug", help="a lesson outline saved by `sandbook plan`")
+    p_probe.add_argument("--no-profile", action="store_true",
+                         help="do not record the answers for future lessons")
+    p_probe.set_defaults(func=cmd_probe)
 
     p_build = sub.add_parser("build", help="generate a lesson into output/")
     p_build.add_argument("topic", nargs="?", help="what the lesson should teach")

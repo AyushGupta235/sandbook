@@ -35,6 +35,7 @@ sys.path.insert(0, str(ROOT / "verifier"))
 sys.path.insert(0, str(ROOT))
 
 import kernels  # noqa: E402
+import learner_profile  # noqa: E402
 from verify import verify_lesson  # noqa: E402
 from llm import Model, ModelAuthError, ModelError, parse_json_reply  # noqa: E402
 
@@ -359,7 +360,8 @@ PLAN_FILE = "curriculum.json"
 
 
 def plan(model: Model, topic: str, *, output_root: pathlib.Path, grounding: str = "",
-         ground: bool = False, on_event=lambda *_: None) -> dict:
+         ground: bool = False, use_profile: bool = True,
+         on_event=lambda *_: None) -> dict:
     """Design the outline and stop there.
 
     The expensive half of a build is the modules, and the outline is what
@@ -372,6 +374,13 @@ def plan(model: Model, topic: str, *, output_root: pathlib.Path, grounding: str 
         gathered = run_grounding(model, topic)
         on_event("curriculum", f"{len(gathered.get('sources') or [])} source(s) cited")
         grounding = "\n\n".join(p for p in (grounding, grounding_text(gathered)) if p)
+
+    # Ground already covered, so the outline can build past it instead of
+    # re-teaching it. Callers are expected to report what this skipped.
+    established = learner_profile.established() if use_profile else []
+    if established:
+        on_event("detail", f"{len(established)} thing(s) you have already shown you know")
+        grounding = "\n\n".join(p for p in (grounding, learner_profile.known_text(established)) if p)
 
     on_event("stage", "designing the curriculum")
     curriculum = run_curriculum(model, topic, grounding)
@@ -437,6 +446,97 @@ def run_revise(model: Model, curriculum: dict, instructions: str) -> dict:
         if carried in curriculum:
             revised.setdefault(carried, curriculum[carried])
     return revised
+
+
+PROBE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "questions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "module_id": {"type": "string"},
+                    "question": {"type": "string"},
+                    "options": {"type": "array", "items": {"type": "string"},
+                                "minItems": 2, "maxItems": 5},
+                    "answer_index": {"type": "integer"},
+                    "why": {"type": "string"},
+                },
+                "required": ["module_id", "question", "options", "answer_index", "why"],
+            },
+        },
+    },
+    "required": ["questions"],
+}
+
+
+def run_probe(model: Model, curriculum: dict) -> list[dict]:
+    """Questions that find out what the reader already understands.
+
+    A deliberate exception to the rule that answers are derived rather than
+    asserted. Everywhere else that rule is absolute, because a wrong answer in
+    a lesson teaches something false. A probe question ships to nobody: it
+    decides which modules get built, the reader sees every decision it drove,
+    and any of them can be overridden. Deriving these answers would mean
+    building model functions for each one, which costs about as much as the
+    lesson the probe exists to make cheaper.
+
+    The trade is worth stating plainly rather than hiding: probe answers are
+    asserted, and nothing generated here is allowed into a lesson.
+    """
+    modules = curriculum.get("modules") or []
+    described = "\n".join(
+        f"- id: {m['id']}\n  title: {m['title']}\n  intent: {m['intent']}\n"
+        f"  misconception: {m.get('misconception') or '(none stated)'}"
+        for m in modules)
+    reply = model.complete(
+        stage="probe",
+        system="You write questions that reveal what someone already understands. "
+               "You return JSON only.",
+        prompt=render("probe.md", title=curriculum["title"],
+                      subtitle=curriculum.get("subtitle", ""), modules=described,
+                      grounding=curriculum.get("_grounding") or ""),
+        schema=PROBE_SCHEMA,
+        model="claude-opus-5",
+    )
+    data = parse_json_reply(reply.text)
+    known_ids = {m["id"] for m in modules}
+    questions = []
+    for q in data.get("questions") or []:
+        options = q.get("options") or []
+        index = q.get("answer_index")
+        if q.get("module_id") not in known_ids or len(options) < 2:
+            continue
+        if not isinstance(index, int) or not (0 <= index < len(options)):
+            continue
+        questions.append(q)
+    if not questions:
+        raise ModelError("the probe produced no usable questions")
+    return questions
+
+
+def probe_instructions(results: list[dict], curriculum: dict) -> str:
+    """Turn probe outcomes into revision instructions.
+
+    Correct answers drop modules, wrong answers expand them. A module the
+    reader got wrong is the one they came for, so it gets the question they
+    missed as its opening rather than merely surviving.
+    """
+    by_id = {m["id"]: m for m in curriculum.get("modules") or []}
+    notes = []
+    for r in results:
+        module = by_id.get(r["module_id"])
+        if not module:
+            continue
+        if r["correct"]:
+            notes.append(f"- Drop '{module['title']}' (id {module['id']}). I answered its "
+                         f"question correctly, so I already understand: {r['misconception']}")
+        else:
+            notes.append(f"- Keep and expand '{module['title']}' (id {module['id']}). I got "
+                         f"its question wrong, so this is what I actually came for. Open it "
+                         f"with the situation from that question: {r['question']}")
+    return "\n".join(notes)
 
 
 def outline_text(curriculum: dict) -> str:
