@@ -372,8 +372,89 @@ def case_grounding_is_data_not_instruction() -> str:
     return "injected text in fetched material changed nothing the verifier does"
 
 
+def case_plan_revise_build() -> str:
+    """Design an outline, cut a module from it, then build what survived.
+
+    The properties that matter: planning does not build anything, a revision
+    reaches the build, and the module the reader dropped never gets made. That
+    last one is the whole point, and it is the one a refactor would break
+    silently.
+    """
+    def module(mid, title):
+        return {"id": mid, "title": title, "widget_type": "step-sim",
+                "intent": "i", "teaching_note": "n",
+                "misconception": f"thinks {mid} works differently"}
+
+    original = {
+        "slug": "planned", "title": "Planned", "subtitle": "s", "packages": [],
+        "objectives": ["o"], "misconceptions": [{"claim": "c", "reality": "r"}],
+        "modules": [module("keep-me", "Keep Me"), module("drop-me", "Drop Me")],
+    }
+    revised = dict(original, modules=[module("keep-me", "Keep Me")],
+                   revision_note="Dropped Drop Me as asked; nothing depended on it.")
+
+    calls = [
+        {"stage": "curriculum", "system": "", "prompt": "", "reply": json.dumps(original)},
+        {"stage": "revise", "system": "", "prompt": "", "reply": json.dumps(revised)},
+        {"stage": "module", "system": "", "prompt": "",
+         "reply": json.dumps(_sim_module("p", "pl"))},
+    ]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        fixture = pathlib.Path(tmp) / "planned.json"
+        fixture.write_text(json.dumps({"calls": calls}))
+        out = pathlib.Path(tmp) / "out"
+        model = ScriptedModel.from_file(fixture)
+
+        planned = pipeline.plan(model, "a planned topic", output_root=out,
+                               on_event=lambda *_: None)
+        check((out / "planned" / "curriculum.json").exists(), "the outline was not saved")
+        check(not (out / "planned" / "lesson.json").exists(),
+              "planning must not build a lesson")
+        check(len(planned["modules"]) == 2, f"expected 2 planned modules: {planned['modules']}")
+
+        reloaded = pipeline.load_plan(out, "planned")
+        check(reloaded["title"] == "Planned", "the saved outline did not round-trip")
+
+        after = pipeline.run_revise(model, reloaded, "- Drop the module 'Drop Me' (id drop-me).")
+        check([m["id"] for m in after["modules"]] == ["keep-me"],
+              f"the revision did not drop the module: {[m['id'] for m in after['modules']]}")
+        check(after["slug"] == "planned", "a revision must not rename the lesson")
+        pipeline.save_plan(out, after)
+
+        report = pipeline.build(model, "", output_root=out, curriculum=after,
+                                on_event=lambda *_: None)
+        check(report.ok, f"the build from plan failed: {report.dropped}")
+        check(report.shipped == ["keep-me"],
+              f"only the kept module should have been built, got {report.shipped}")
+        document = json.loads((report.path / "lesson.json").read_text())
+
+    check([m["id"] for m in document["modules"]] == ["keep-me"],
+          "a dropped module reached the lesson")
+    return "planned 2, dropped 1 by hand, built only what survived"
+
+
+def case_outline_is_readable() -> str:
+    """The outline has to show the reader what each module is for."""
+    curriculum = {
+        "slug": "readable", "title": "Readable", "subtitle": "sub",
+        "targets": "Widget 4.2",
+        "modules": [{"id": "one", "title": "Module One", "widget_type": "bug-hunt",
+                     "intent": "understand the thing",
+                     "teaching_note": "n",
+                     "misconception": "thinks the cache speeds up prefill"}],
+    }
+    text = pipeline.outline_text(curriculum)
+    for expected in ("Module One", "bug-hunt", "understand the thing",
+                     "thinks the cache speeds up prefill", "Widget 4.2"):
+        check(expected in text, f"the outline omits {expected!r}:\n{text}")
+    return "title, widget, intent, targeted misconception and version all shown"
+
+
 CASES = [
     ("token-bucket: repair and fail-closed drop", case_token_bucket),
+    ("plan, revise, then build what survived", case_plan_revise_build),
+    ("outline shows what each module is for", case_outline_is_readable),
     ("grounding: citations come from retrieval", case_grounding_citations),
     ("grounding: fetched text is data, not instruction", case_grounding_is_data_not_instruction),
     ("temporal: infra topic with a code-cell", case_temporal),

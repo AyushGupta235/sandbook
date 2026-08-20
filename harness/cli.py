@@ -56,6 +56,19 @@ def _title_of(path: pathlib.Path) -> str:
 
 
 def cmd_build(args: argparse.Namespace) -> int:
+    # Both are optional individually, so guard the combination. Without this a
+    # bare `sandbook build` starts a live run on an empty topic and spends real
+    # money designing a lesson about nothing.
+    if not args.topic and not args.from_plan:
+        print("build needs a topic, or --from-plan <slug> to build a saved outline.\n"
+              "  ./sandbook plan \"your topic\"     designs an outline first, for much less",
+              file=sys.stderr)
+        return 2
+    if args.topic and args.from_plan:
+        print("pass a topic or --from-plan, not both: a saved outline already has its topic",
+              file=sys.stderr)
+        return 2
+
     sys.path.insert(0, str(ROOT / "harness"))
     from llm import AgentSDKModel, ModelAuthError, ModelError, ScriptedModel, save_recording
     import pipeline
@@ -92,11 +105,22 @@ def cmd_build(args: argparse.Namespace) -> int:
         grounding = "\n\n".join(
             p for p in (grounding, notes.grounding_text(vault, gathered)) if p)
 
-    print(f"building a lesson on: {args.topic}")
+    saved = None
+    if args.from_plan:
+        try:
+            saved = pipeline.load_plan(OUTPUT, args.from_plan)
+        except ModelError as e:
+            print(f"\n{e}", file=sys.stderr)
+            return 1
+        print(f"building from the outline you approved: {saved['title']}")
+    else:
+        print(f"building a lesson on: {args.topic}")
+
     try:
-        report = pipeline.build(model, args.topic, output_root=OUTPUT,
+        report = pipeline.build(model, args.topic or "", output_root=OUTPUT,
                                 grounding=grounding, ground=args.ground,
-                                review=args.review, on_event=on_event)
+                                review=args.review, curriculum=saved,
+                                on_event=on_event)
     except ModelAuthError as e:
         print(f"\n{e}", file=sys.stderr)
         return 2
@@ -139,6 +163,102 @@ def cmd_build(args: argparse.Namespace) -> int:
           f" ?lesson={report.slug}&from=output")
     print(f"promote it: ./sandbook promote {report.slug}")
     return 0
+
+
+def cmd_plan(args: argparse.Namespace) -> int:
+    """Design the outline, show it, and stop before the expensive part."""
+    if not args.topic and not args.edit:
+        print("plan needs a topic, or --edit <slug> to revise a saved outline.",
+              file=sys.stderr)
+        return 2
+    if args.topic and args.edit:
+        print("pass a topic or --edit, not both", file=sys.stderr)
+        return 2
+
+    sys.path.insert(0, str(ROOT / "harness"))
+    from llm import AgentSDKModel, ModelAuthError, ModelError
+    import pipeline
+
+    model = AgentSDKModel()
+
+    def on_event(kind: str, message: str) -> None:
+        print(f"  {'✓' if kind == 'ok' else '·'} {message}", flush=True)
+
+    try:
+        if args.edit:
+            curriculum = pipeline.load_plan(OUTPUT, args.edit)
+            print(pipeline.outline_text(curriculum))
+            instructions = _collect_edits(curriculum)
+            if not instructions:
+                print("nothing changed")
+                return 0
+            print("\n  · revising the outline")
+            curriculum = pipeline.run_revise(model, curriculum, instructions)
+            path = pipeline.save_plan(OUTPUT, curriculum)
+            print()
+            if curriculum.get("revision_note"):
+                print(f"  {curriculum['revision_note']}\n")
+            print(pipeline.outline_text(curriculum))
+            print(f"saved to {path.relative_to(ROOT)}")
+        else:
+            grounding = pathlib.Path(args.grounding).read_text() if args.grounding else ""
+            curriculum = pipeline.plan(model, args.topic, output_root=OUTPUT,
+                                       grounding=grounding, ground=args.ground,
+                                       on_event=on_event)
+            print()
+            print(pipeline.outline_text(curriculum))
+    except ModelAuthError as e:
+        print(f"\n{e}", file=sys.stderr)
+        return 2
+    except ModelError as e:
+        print(f"\n{e}", file=sys.stderr)
+        return 1
+
+    if getattr(model, "total_cost_usd", 0.0):
+        print(f"cost: ${model.total_cost_usd:.2f}")
+    slug = curriculum["slug"]
+    print(f"\nedit it:  ./sandbook plan --edit {slug}"
+          f"\n      or  $EDITOR output/{slug}/curriculum.json"
+          f"\nbuild it: ./sandbook build --from-plan {slug}")
+    return 0
+
+
+def _collect_edits(curriculum: dict) -> str:
+    """Walk the outline module by module and collect what the reader wants.
+
+    Deliberately a plain prompt loop. The alternative is a form, and a form
+    would take longer to build than it saves anyone.
+    """
+    print("For each module: [k]eep, [d]rop, [x] I already know this, "
+          "[+] go deeper, or type a note.\n")
+    notes = []
+    for i, m in enumerate(curriculum.get("modules") or [], 1):
+        try:
+            answer = input(f"  {i}. {m['title']} [{m['widget_type']}] > ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return ""
+        low = answer.lower()
+        if low in ("", "k", "keep"):
+            continue
+        if low in ("d", "drop"):
+            notes.append(f"Drop the module '{m['title']}' (id {m['id']}).")
+        elif low in ("x",):
+            notes.append(f"I already understand this, so drop '{m['title']}' (id {m['id']}): "
+                         f"{m.get('misconception') or m['intent']}")
+        elif low in ("+", "deeper"):
+            notes.append(f"Go deeper on '{m['title']}' (id {m['id']}); the current plan is "
+                         "too shallow for me.")
+        else:
+            notes.append(f"About '{m['title']}' (id {m['id']}): {answer}")
+
+    try:
+        extra = input("\n  Anything to add that is missing? > ").strip()
+    except (EOFError, KeyboardInterrupt):
+        extra = ""
+    if extra:
+        notes.append(f"Add coverage of: {extra}")
+    return "\n".join(f"- {n}" for n in notes)
 
 
 def cmd_review(args: argparse.Namespace) -> int:
@@ -287,8 +407,20 @@ def main(argv: list[str] | None = None) -> int:
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
 
+    p_plan = sub.add_parser("plan", help="design the outline and stop, before the costly part")
+    p_plan.add_argument("topic", nargs="?", help="what the lesson should teach")
+    p_plan.add_argument("--edit", metavar="SLUG",
+                        help="revise a saved outline module by module")
+    p_plan.add_argument("--ground", action="store_true",
+                        help="look up and cite versioned sources first")
+    p_plan.add_argument("--grounding", help="file of source material to design against")
+    p_plan.set_defaults(func=cmd_plan)
+
     p_build = sub.add_parser("build", help="generate a lesson into output/")
-    p_build.add_argument("topic", help="what the lesson should teach")
+    p_build.add_argument("topic", nargs="?", help="what the lesson should teach")
+    p_build.add_argument("--from-plan", metavar="SLUG",
+                         help="build the outline saved by `sandbook plan`, skipping "
+                              "the design stage")
     p_build.add_argument("--grounding", help="file of source notes to ground the lesson in")
     p_build.add_argument("--from-note", metavar="NOTE",
                          help="ground the lesson in one of your own Obsidian notes, "

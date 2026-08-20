@@ -111,8 +111,13 @@ CURRICULUM_SCHEMA = {
                                     "enum": sorted(WIDGET_TYPES)},
                     "intent": {"type": "string"},
                     "teaching_note": {"type": "string"},
+                    # Per-module rather than lesson-wide, because this is the
+                    # field a reader uses to decide whether a module earns its
+                    # place, and it is what a knowledge probe tests against.
+                    "misconception": {"type": "string"},
                 },
-                "required": ["id", "title", "widget_type", "intent", "teaching_note"],
+                "required": ["id", "title", "widget_type", "intent", "teaching_note",
+                             "misconception"],
                 "additionalProperties": False,
             },
         },
@@ -350,6 +355,108 @@ def run_curriculum(model: Model, topic: str, grounding: str = "") -> dict:
     return curriculum
 
 
+PLAN_FILE = "curriculum.json"
+
+
+def plan(model: Model, topic: str, *, output_root: pathlib.Path, grounding: str = "",
+         ground: bool = False, on_event=lambda *_: None) -> dict:
+    """Design the outline and stop there.
+
+    The expensive half of a build is the modules, and the outline is what
+    decides whether they are worth building. Producing it on its own costs a
+    fraction of a full run and is the only point where steering is cheap.
+    """
+    gathered: dict = {}
+    if ground:
+        on_event("stage", "gathering source material")
+        gathered = run_grounding(model, topic)
+        on_event("curriculum", f"{len(gathered.get('sources') or [])} source(s) cited")
+        grounding = "\n\n".join(p for p in (grounding, grounding_text(gathered)) if p)
+
+    on_event("stage", "designing the curriculum")
+    curriculum = run_curriculum(model, topic, grounding)
+    if gathered.get("sources"):
+        curriculum["sources"] = gathered["sources"]
+        curriculum.setdefault("targets", gathered.get("targets"))
+    # Carry the material forward so `build --from-plan` writes from the same
+    # grounding the outline was designed against, without paying to fetch it
+    # again.
+    curriculum["_topic"] = topic
+    curriculum["_grounding"] = grounding
+
+    destination = output_root / curriculum["slug"]
+    destination.mkdir(parents=True, exist_ok=True)
+    (destination / PLAN_FILE).write_text(json.dumps(curriculum, indent=2) + "\n")
+    on_event("ok", f"outline saved to {destination / PLAN_FILE}")
+    return curriculum
+
+
+def load_plan(output_root: pathlib.Path, slug: str) -> dict:
+    path = output_root / slug / PLAN_FILE
+    if not path.exists():
+        raise ModelError(f"no saved outline at {path}; run `sandbook plan` first")
+    curriculum = json.loads(path.read_text())
+    _check_curriculum(curriculum, curriculum.get("_topic", slug))
+    return curriculum
+
+
+def save_plan(output_root: pathlib.Path, curriculum: dict) -> pathlib.Path:
+    destination = output_root / curriculum["slug"]
+    destination.mkdir(parents=True, exist_ok=True)
+    path = destination / PLAN_FILE
+    path.write_text(json.dumps(curriculum, indent=2) + "\n")
+    return path
+
+
+def run_revise(model: Model, curriculum: dict, instructions: str) -> dict:
+    """Re-balance an outline after the reader has cut and added modules.
+
+    Not a formality. Modules lean on each other, so removing the one that
+    introduces a mental model can leave the next three without footing, and
+    nothing in a text editor would say so. This is also where an added topic
+    gets a widget type and a place in the sequence rather than being appended
+    to the end.
+    """
+    previous = json.dumps(
+        {k: v for k, v in curriculum.items() if not k.startswith("_")}, indent=2)
+    reply = model.complete(
+        stage="revise",
+        system="You revise a lesson outline to the reader's instructions. You return JSON only.",
+        prompt=render("revise.md", previous=previous, instructions=instructions,
+                      kernels=kernels.describe() or "  (none available)",
+                      grounding=curriculum.get("_grounding") or "No grounding notes supplied."),
+        schema=CURRICULUM_SCHEMA,
+        model="claude-opus-5",
+    )
+    revised = parse_json_reply(reply.text)
+    _check_curriculum(revised, curriculum.get("_topic", revised.get("slug", "lesson")))
+    # The reader named this lesson by planning it; a revision does not get to
+    # rename the directory out from under them.
+    revised["slug"] = curriculum["slug"]
+    for carried in ("_topic", "_grounding", "sources", "targets"):
+        if carried in curriculum:
+            revised.setdefault(carried, curriculum[carried])
+    return revised
+
+
+def outline_text(curriculum: dict) -> str:
+    """The outline as something worth reading before spending money on it."""
+    lines = [f"{curriculum['title']}", f"  {curriculum.get('subtitle', '')}", ""]
+    if curriculum.get("targets"):
+        lines.append(f"  targets: {curriculum['targets']}")
+    if curriculum.get("sources"):
+        lines.append(f"  sources: {len(curriculum['sources'])} cited")
+    if curriculum.get("targets") or curriculum.get("sources"):
+        lines.append("")
+    for i, m in enumerate(curriculum.get("modules") or [], 1):
+        lines.append(f"  {i}. {m['title']}  [{m['widget_type']}]  id={m['id']}")
+        lines.append(f"     intent: {m['intent']}")
+        if m.get("misconception"):
+            lines.append(f"     targets: {m['misconception']}")
+        lines.append("")
+    return "\n".join(lines)
+
+
 def _check_curriculum(c: dict, topic: str) -> None:
     for field_name in ("title", "modules"):
         if not c.get(field_name):
@@ -361,6 +468,9 @@ def _check_curriculum(c: dict, topic: str) -> None:
         for key in ("id", "title", "widget_type", "intent", "teaching_note"):
             if not m.get(key):
                 raise ModelError(f"module {i} is missing {key!r}")
+        # Optional here though required by the schema, so recordings made
+        # before this field existed still replay.
+        m.setdefault("misconception", "")
         m["id"] = slugify(m["id"])
         if m["id"] in seen:
             raise ModelError(f"duplicate module id {m['id']!r}")
@@ -727,7 +837,17 @@ def run_review(model: Model, curriculum: dict, module: BuiltModule,
 
 def build(model: Model, topic: str, *, output_root: pathlib.Path,
           grounding: str = "", ground: bool = False, review: bool = False,
+          curriculum: dict | None = None,
           on_event=lambda *_: None) -> BuildReport:
+    if curriculum is not None:
+        # Building from an outline the reader has already seen and approved.
+        # Grounding travels with it, so nothing is fetched or designed again.
+        grounding = curriculum.get("_grounding") or grounding
+        on_event("curriculum",
+                 f"{curriculum['title']}: {len(curriculum['modules'])} modules (from plan)")
+        return _build_modules(model, curriculum, grounding=grounding, review=review,
+                              output_root=output_root, on_event=on_event)
+
     gathered: dict = {}
     if ground:
         on_event("stage", "gathering source material")
@@ -746,9 +866,15 @@ def build(model: Model, topic: str, *, output_root: pathlib.Path,
     if gathered.get("sources"):
         curriculum["sources"] = gathered["sources"]
         curriculum.setdefault("targets", gathered.get("targets"))
+    on_event("curriculum", f"{curriculum['title']}: {len(curriculum['modules'])} modules")
+    return _build_modules(model, curriculum, grounding=grounding, review=review,
+                          output_root=output_root, on_event=on_event)
+
+
+def _build_modules(model: Model, curriculum: dict, *, grounding: str, review: bool,
+                   output_root: pathlib.Path, on_event) -> BuildReport:
     slug = curriculum["slug"]
     report = BuildReport(slug=slug, title=curriculum["title"], path=None)
-    on_event("curriculum", f"{curriculum['title']}: {len(curriculum['modules'])} modules")
 
     built: list[BuiltModule] = []
     taken: set[str] = set()

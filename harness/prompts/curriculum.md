@@ -77,7 +77,9 @@ Return one JSON object and nothing else. No markdown fence, no commentary.
       "widget_type": "param-playground | predict-reveal | step-sim | code-cell",
       "intent": "What the learner should understand after this module.",
       "teaching_note": "The concrete thing to show, including specific numbers, "
-                       "presets, or scenarios the builder should use."
+                       "presets, or scenarios the builder should use.",
+      "misconception": "The specific wrong belief this module exists to break, "
+                       "in one sentence, stated as what someone wrongly thinks."
     }
   ]
 }
@@ -92,6 +94,12 @@ Rules:
   the maths needs it.
 - `teaching_note` is the highest-leverage field you write. Be specific: name
   the presets, the values, the scenario. The builder follows it literally.
+- `misconception` is what the reader will judge the module by. It must be a
+  belief someone actually holds, specific enough to be tested by a single
+  question, and different from every other module's. "Does not understand
+  caching" is useless; "thinks the cache speeds up prefill too" is a module.
+  A module whose misconception you cannot state in one sentence is a module
+  that has not earned its place, so cut it.
 - Set `targets` when the topic has versioned behaviour that could drift, such
   as a tool or an API. Otherwise null.
 - `sources` records what the lesson was built from, so a reader can check it
