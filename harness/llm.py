@@ -181,15 +181,22 @@ class AgentSDKModel:
                 "  ./.venv/bin/pip install claude-agent-sdk"
             ) from e
 
+        # `tools` is the set that *exists*; `allowed_tools` is the subset that
+        # runs without a permission prompt. They are not interchangeable, and
+        # getting that backwards is silent: a stage asked for WebSearch through
+        # allowed_tools while tools=[] had already removed every built-in, so
+        # grounding ran with no way to fetch anything and said so in its notes
+        # rather than failing. Both lists, or the tool is not there.
+        #
+        # Only the grounding stage passes anything. Every stage that writes a
+        # lesson keeps tools=[], so it cannot reach the network or the
+        # filesystem however it is prompted.
+        granted = list(allowed_tools or [])
         options = ClaudeAgentOptions(
             model=model,
             system_prompt=system,
-            tools=[],                 # no custom tools; the model never acts on our behalf
-            # Only the grounding stage passes anything here, and only the two
-            # read-only web tools. Everything that writes a lesson runs with no
-            # tools at all, so a generation stage cannot reach the network or
-            # the filesystem however it is prompted.
-            allowed_tools=list(allowed_tools or []),
+            tools=granted,
+            allowed_tools=granted,
             setting_sources=None,     # ignore user/project settings for reproducibility
             # A bound, not a target. With no tools there is nothing to loop on,
             # but the CLI counts a turn for its own bookkeeping and a limit of 1
