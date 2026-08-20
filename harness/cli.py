@@ -33,6 +33,12 @@ DEFAULT_PORT = 8765
 # ------------------------------------------------------------------- helpers
 
 
+def notes_env() -> str:
+    sys.path.insert(0, str(ROOT / "harness"))
+    import notes
+    return notes.VAULT_ENV
+
+
 def _lesson_dirs(base: pathlib.Path) -> list[pathlib.Path]:
     if not base.exists():
         return []
@@ -74,6 +80,17 @@ def cmd_build(args: argparse.Namespace) -> int:
     grounding = ""
     if args.grounding:
         grounding = pathlib.Path(args.grounding).read_text()
+    if args.from_note:
+        import notes
+        try:
+            vault = notes.vault_path(args.vault)
+            gathered = notes.gather(vault, args.from_note, follow_links=not args.no_links)
+        except notes.NoteError as e:
+            print(f"\n{e}", file=sys.stderr)
+            return 2
+        print(f"  · grounding in your notes: {', '.join(gathered['titles'])}")
+        grounding = "\n\n".join(
+            p for p in (grounding, notes.grounding_text(vault, gathered)) if p)
 
     print(f"building a lesson on: {args.topic}")
     try:
@@ -242,6 +259,7 @@ def cmd_selftest(_args: argparse.Namespace) -> int:
     drops what it cannot. Kernels run first; if they are wrong, everything
     measured against them is wrong too."""
     rc = subprocess.call([sys.executable, str(ROOT / "kernels" / "test_kernels.py")])
+    rc |= subprocess.call([sys.executable, str(ROOT / "verifier" / "test_notes.py")])
     rc |= subprocess.call([sys.executable, str(ROOT / "verifier" / "test_mutations.py")])
     rc |= subprocess.call([sys.executable, str(ROOT / "verifier" / "test_pipeline.py")])
     return rc
@@ -272,6 +290,12 @@ def main(argv: list[str] | None = None) -> int:
     p_build = sub.add_parser("build", help="generate a lesson into output/")
     p_build.add_argument("topic", help="what the lesson should teach")
     p_build.add_argument("--grounding", help="file of source notes to ground the lesson in")
+    p_build.add_argument("--from-note", metavar="NOTE",
+                         help="ground the lesson in one of your own Obsidian notes, "
+                              "named by path or title (read-only)")
+    p_build.add_argument("--vault", help=f"path to the vault (default: ${notes_env()})")
+    p_build.add_argument("--no-links", action="store_true",
+                         help="use only the named note, not the notes it links to")
     p_build.add_argument("--ground", action="store_true",
                          help="look up and cite versioned sources before writing "
                               "(the only stage that reaches the network)")
