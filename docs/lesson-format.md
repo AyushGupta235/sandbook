@@ -101,6 +101,60 @@ fails. Without the second, an exercise can ship already solved. A graded
 rejection must also point at a specific failing check, so the learner is never
 told "not there yet" with nothing to act on.
 
+### `order-build`
+
+Fields: `task`, `items` (each with `id`, `label`, optional `detail`), `order.fn`.
+The learner arranges the steps. `order.fn` returns
+`{order: [id...], constraints: [[before, after], ...]}`, and the arrangement is
+judged against the **constraints**, so every order that would really work is
+accepted. Constrain only what is genuinely required: two steps that happen
+together should be left unordered, or a learner who is right gets told they are
+wrong.
+
+Enforced: at least three items with unique ids, at least one constraint, `order`
+is an arrangement of exactly those ids and satisfies every constraint, and the
+order the items are *listed* in breaks at least one, so it cannot be solved by
+clicking top to bottom.
+
+### `param-hunt`
+
+Fields: `task`, `params` (as `param-playground`), `goal.fn`, optional `view.fn`.
+The learner has to *achieve* something rather than observe. `goal.fn` returns
+`{met, message, detail?}`, and the message is the teaching surface: say which
+requirement fails and by how much.
+
+Enforced: the goal is **unmet at the defaults** and met somewhere in the space,
+so the exercise ships neither already solved nor impossible.
+
+### `calc-widget`
+
+Fields: `task`, `answer.fn`, optional `prompt`, `unit`, `tolerance`, `format`,
+`working.fn`, `hints`. The learner works a number out by hand. The expected value
+is computed, never stored, so it cannot drift from the model. `tolerance` is
+absolute near zero and relative for large values; use `0` for exact integers.
+Hints are consumed in order across attempts, and `working` is revealed only once
+the answer is right.
+
+### `bug-hunt`
+
+Fields: `task`, `code`, `tests`, `candidates` (each `id`, `line`, `patch`,
+optional `label`). The learner picks the wrong line; that line's patch is applied
+and the tests run, so the answer is demonstrated rather than announced. `line` is
+1-indexed and a patch replaces exactly that line.
+
+Enforced: `code` as shipped **fails** the tests and **exactly one** candidate's
+patch makes them pass. Give wrong candidates a patch identical to the line they
+replace. Note that this only works if the tests pin more than the one line;
+otherwise a compensating fix elsewhere also passes and the exercise is ambiguous.
+
+### `diff-apply`
+
+Fields: `task`, `code`, `tests`, `candidates` (each `id`, `label`, `code`,
+optional `detail`). Same contract as `bug-hunt`, different question: not where
+the defect is but which repair holds up. Each candidate carries the whole listing
+as it would be after the change, so a fix may span several lines. Make the wrong
+candidates things a reasonable reviewer would suggest.
+
 ## What the verifier enforces
 
 Run `./sandbook verify`. Any single error blocks the lesson.
@@ -116,14 +170,25 @@ Lessons declaring `packages` (loaded by Pyodide in the browser) are checked
 against the verifier's own Python first, so an environment mismatch fails with a
 clear message instead of an ImportError from inside a model.
 
-`./sandbook selftest` plants 17 known defects across both reference lessons and
-confirms each is caught. When you add a check, add the mutation that proves it
-fires.
+`./sandbook selftest` runs the kernels' property tests, the note-grounding
+tests, 42 planted defects across three reference lessons, and the pipeline
+regression against recorded live builds. When you add a check, add the mutation
+that proves it fires.
+
+5. **Claims.** A function declaring `implements: <kernel>` is run against the
+   trusted implementation in `kernels/` over that kernel's probe inputs and must
+   agree with it.
+6. **Provenance.** A citation without a followable url is an error. A lesson
+   pinning a tool version warns if it cites nothing, records no date, or is over
+   a year old.
 
 ## Known gap
 
-The verifier proves a lesson is well-formed, executable, and self-consistent. It
-does not prove the content is true. A confident, wrong explanation with matching
-code would pass today. Closing that needs trusted reference implementations for
-well-known primitives plus an independent review pass against cited sources.
-Until then, treat generated lessons as drafts rather than references.
+The contract proves a lesson is well-formed, executable, and self-consistent,
+which a confidently wrong lesson also is. Two things narrow that gap: kernels
+settle the claims a lesson stakes against a known primitive, and `--review` has
+a fresh context check the rest against what the code actually returns. The
+review is a model judging a model, so it cannot be proven correct the way the
+kernel check can, and it is opt-in for that reason.
+
+What nothing here checks is whether the *choice* of what to teach is any good.

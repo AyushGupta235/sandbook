@@ -34,10 +34,13 @@ Three rules do most of the work.
 
 ## Status
 
-Runtime, widget library, sandbox, verifier, generation pipeline, and CLI, plus
-two hand-written reference lessons. The pipeline is tested end to end against
-recorded model replies. Live generation needs a working `claude` login (see
-Generating a lesson below).
+Working end to end. Six lessons in `lessons/`: three hand-written (softmax,
+Kubernetes scheduling, rolling updates) and three generated and reviewed
+(KV-caching, Temporal replay, Terraform state). Nine widget types, trusted
+kernels, an independent review pass, grounding from the web or from your own
+notes, and a regression suite that replays recorded live builds.
+
+Live generation needs a working `claude` login (see Generating a lesson below).
 
 ## Try it
 
@@ -50,9 +53,17 @@ Then open <http://localhost:8765/runtime/index.html>.
 ```bash
 ./sandbook list        # built lessons
 ./sandbook verify      # hold every lesson to the contract
-./sandbook selftest    # kernel tests, mutation suite, pipeline regression
+./sandbook selftest    # kernels, notes, 42 mutations, pipeline regression
 ./sandbook review      # ask a fresh context whether a lesson teaches anything false
 ```
+
+Nine widget types, all hand-written and never generated: `param-playground`,
+`predict-reveal`, `step-sim`, `code-cell`, `order-build`, `param-hunt`,
+`calc-widget`, `bug-hunt`, `diff-apply`. What they have in common is that the
+answer is *derived* rather than stored: a quiz option carries a predicate that
+gets executed, an ordering is judged against declared constraints, a bug is the
+line whose fix makes the tests pass. See
+[`docs/lesson-format.md`](docs/lesson-format.md).
 
 ## Generating a lesson
 
@@ -94,6 +105,11 @@ loosen a verifier check.
 
 `--review` has a fresh context check each module for false claims, and roughly
 doubles the cost.
+
+`--from-note <title>` grounds the lesson in your own Obsidian notes instead,
+following their wikilinks one level so the surrounding detail comes too. Set
+`SANDBOOK_VAULT` to your vault. It only ever reads, and the test suite
+fingerprints the vault to prove it.
 
 `--replay <recording>` runs the whole pipeline from recorded replies with no
 model calls, which is how the regression tests work; `--record <file>` saves a
