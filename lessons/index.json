@@ -11,9 +11,24 @@
       "subtitle": "Work out what a KV cache actually stores, how large it gets, and why it turns decoding into a memory-bandwidth problem rather than a compute one."
     },
     {
+      "slug": "rolling-updates-and-readiness",
+      "title": "Rolling Updates and Readiness",
+      "subtitle": "Why a rollout with no downtime budget can stall forever while every request still succeeds."
+    },
+    {
       "slug": "softmax-and-temperature",
       "title": "Softmax & Temperature",
       "subtitle": "What the temperature knob is really doing to a language model's next-token distribution."
+    },
+    {
+      "slug": "temporal-determinism-and-retries",
+      "title": "Replay-Safe Temporal Workflows",
+      "subtitle": "Predict how a Temporal workflow behaves on replay, and read a retry policy well enough to know exactly when the last attempt fires."
+    },
+    {
+      "slug": "terraform-state-and-the-dependency-graph",
+      "title": "State, Plan, and the Graph",
+      "subtitle": "You will be able to predict what a Terraform plan proposes, and in what order an apply executes it, from the state file and the reference edges rather than from the order of your HCL."
     }
   ]
 }

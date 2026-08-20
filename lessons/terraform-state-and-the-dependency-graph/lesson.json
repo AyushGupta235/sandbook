@@ -1,0 +1,285 @@
+{
+  "schema_version": 1,
+  "slug": "terraform-state-and-the-dependency-graph",
+  "title": "State, Plan, and the Graph",
+  "subtitle": "You will be able to predict what a Terraform plan proposes, and in what order an apply executes it, from the state file and the reference edges rather than from the order of your HCL.",
+  "model": "model.py",
+  "packages": [],
+  "objectives": [
+    "Read state as a mapping from resource address to a recorded snapshot of a real remote object, and say what breaks when the address changes but the object does not.",
+    "Given a configuration, a recorded state entry, and a real-world object, work out which pairwise disagreements produce which planned action.",
+    "Derive a dependency graph from expression references alone, and add an edge with depends_on only where no reference exists.",
+    "Explain why two resources written adjacently in one file may run far apart in time, and why concurrency changes the interleaving but never the ordering constraints.",
+    "Predict destroy and replace ordering by walking the same graph in the opposite direction."
+  ],
+  "misconceptions": [
+    {
+      "claim": "State is a cache of the cloud, so deleting it is harmless because Terraform can just look everything up again.",
+      "reality": "State is the only record linking a configuration address to a specific remote object. Nothing in the configuration says which of five identical buckets belongs to which address; that binding lives only in state, and losing it makes Terraform propose creating everything again."
+    },
+    {
+      "claim": "A plan diffs my configuration against the cloud.",
+      "reality": "There are three pictures in play, not two: what the configuration asks for, what state recorded last time, and what the remote object looks like now. Different pairs disagreeing produce different proposed actions, and some disagreements are recorded rather than acted on."
+    },
+    {
+      "claim": "Renaming a resource block is a cosmetic change.",
+      "reality": "The address is the state key. A new address has no state entry, and the old entry no longer matches any configuration, so the default reading of that situation is one create plus one destroy of a perfectly healthy object."
+    },
+    {
+      "claim": "Resources are created in the order they appear in the file, so I control ordering by moving blocks around.",
+      "reality": "Ordering comes from the edges of a directed acyclic graph built from references between resources. File order and block order carry no ordering meaning at all; two unrelated resources are unordered with respect to each other."
+    },
+    {
+      "claim": "depends_on is how you express dependencies.",
+      "reality": "Almost every real dependency is already implied by an expression that reads an attribute of another resource. depends_on exists for the residual case where a real ordering requirement leaves no trace in any expression, and adding it where a reference already exists changes nothing."
+    },
+    {
+      "claim": "Raising concurrency can change the order things happen in and cause races.",
+      "reality": "Concurrency only decides how many nodes with satisfied dependencies run at once. Every edge is still honoured, so a higher setting compresses wall-clock time and reorders unrelated work, but never lets a dependent node start before its dependency finishes."
+    }
+  ],
+  "modules": [
+    {
+      "id": "state-is-the-binding",
+      "title": "What state is actually holding",
+      "prose": "Terraform does not remember your buckets by looking at the cloud and recognizing them. It remembers them because state wrote down a pair: this configuration address, that remote id. The config alone can't tell two identical S3 buckets apart, and the cloud alone doesn't know which one you meant by `aws_s3_bucket.logs`. The binding lives only in state.\n\nThe panes below are a simplified model, not a literal state file: a state table of `address -> id, attrs`, and a cloud table of `id, attrs` for whatever actually exists. Step through a small script and watch what a plan proposes at each point. Twice, nothing about the real infrastructure changes, but the plan still proposes a create and a destroy, because the *lookup* failed, not because a bucket did anything.\n\nWatch specifically for the moment state is lost with the cloud untouched, and the moment a rename leaves an orphaned state row on one side and an unmatched config address on the other. Neither event changes a single real object, and both produce a plan that acts as if something did.",
+      "widget": {
+        "type": "step-sim",
+        "title": "State as the address-to-object binding",
+        "max_steps": 6,
+        "autoplay_ms": 1200,
+        "init": {
+          "fn": "state_is_binding_init",
+          "args": {}
+        },
+        "step": {
+          "fn": "state_is_binding_step",
+          "args": {
+            "state": {
+              "state": true
+            }
+          }
+        },
+        "view": {
+          "fn": "state_is_binding_view",
+          "args": {
+            "state": {
+              "state": true
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "three-way-plan",
+      "title": "Three pictures, not two",
+      "prose": "A plan is not a diff between your configuration and the cloud. There are three pictures in play: what the configuration asks for, what state recorded the last time Terraform touched the object, and what the object actually looks like right now. Those three can agree, or any pair of them can disagree while the third sits out, and each pattern produces a different proposal.\n\nBelow is one scenario: config and state agree with each other, but the real object has drifted. Work out what Terraform proposes before revealing the answer, then look at the full table underneath. It runs the same rule over all eight combinations, including the ones that don't look like ordinary edits at all: a resource whose block was deleted, a resource whose object was deleted, and a field change that forces a replace instead of an in-place update.\n\nNotice which two cards actually drove each answer. The third card is present in the scenario but plays no role in the decision, and that's the pattern worth carrying forward: a proposal traces back to a specific pairwise disagreement, not to \"the config changed\" in general. One extra input matters on top of the pair: when config and the real object disagree, whether the changed attribute is marked force-new decides between an in-place update and a replace.\n\nRow 7 is the one to read carefully. Deleting a resource block from configuration while state and the object still exist proposes a destroy, not a quiet unhooking. Dropping a resource from tracking while leaving the object alive is a different, explicit operation (`terraform state rm`, or a `removed` block), and it is never what plain deletion of the block gives you.",
+      "widget": {
+        "type": "predict-reveal",
+        "title": "Three cards, one proposal",
+        "question": "Config asks for instance_type = t3.micro. State also recorded t3.micro from the last apply. But the real object in AWS now shows m5.large, because someone changed it by hand in the console. What does Terraform propose?",
+        "options": [
+          {
+            "id": "no_change",
+            "text": "No change, because the configuration matches what was last recorded in state.",
+            "predicate": "result == 'no change'"
+          },
+          {
+            "id": "create",
+            "text": "Create a new instance, since the live object no longer matches what config and state agree on.",
+            "predicate": "result == 'create'"
+          },
+          {
+            "id": "update",
+            "text": "Update the object in place, setting it back to t3.micro to match config and state.",
+            "predicate": "result == 'update in place'"
+          },
+          {
+            "id": "destroy",
+            "text": "Destroy the object, since state and the real object disagree with each other.",
+            "predicate": "result == 'destroy'"
+          }
+        ],
+        "check": {
+          "fn": "plan_action",
+          "args": {
+            "config": {
+              "const": {
+                "instance_type": "t3.micro"
+              }
+            },
+            "state": {
+              "const": {
+                "instance_type": "t3.micro"
+              }
+            },
+            "real": {
+              "const": {
+                "instance_type": "m5.large"
+              }
+            },
+            "force_new": {
+              "const": false
+            }
+          }
+        },
+        "view": {
+          "fn": "three_way_grid_view",
+          "args": {}
+        },
+        "explanation": "Config and state agree with each other, so nothing about your configuration changed. The disagreement is between the record (state) and reality (the live object). Terraform's default reading of that gap is to pull the object back toward what config and state already agree on, an in-place update, not a create and not a silent no-op. Compare this to row 4 in the table below: there config and the real object agree, and the stale state entry alone doesn't trigger any action against the object. Same three cards, different pair disagreeing, different proposal."
+      }
+    },
+    {
+      "id": "edges-from-references",
+      "title": "Where edges come from",
+      "prose": "A plan orders its work using a dependency graph, and that graph is built from exactly two sources: an expression in one resource's body that reads an attribute of another (`${type.name.attr}`), and an explicit `depends_on` list. Nothing else counts. The order resources are written in the file is not one of those sources, so two resources sitting next to each other in the same file can be entirely unordered with respect to each other.\n\nBelow is a small config: a VPC, a subnet that already reads the VPC's id, a security group that also reads the VPC's id, and an instance. The instance currently hardcodes a subnet id as a string literal, so as far as the graph is concerned it depends on nothing. Fix that first: point it at `${aws_subnet.main.id}` instead of the literal, and the edge appears with no `depends_on` needed, because the expression already records it.\n\nThen handle a case where a reference cannot help you. Add an `aws_iam_role_policy` resource, and make the instance wait for it even though the instance reads none of the policy's attributes. Since no expression touches the policy, the only way to record that ordering requirement is `depends_on`. If you add a `depends_on` for an edge a reference already creates, the grader will tell you it's inert. The parser used here is a teaching toy built for this exercise, not the real HCL parser, but the rule it enforces (edges from references and `depends_on`, never from file position, and the result must be acyclic) is the real one.",
+      "widget": {
+        "type": "code-cell",
+        "language": "hcl",
+        "title": "Where edges come from",
+        "task": "Edit the config so the dependency graph has exactly four edges: aws_subnet.main -> aws_vpc.main, aws_security_group.sg -> aws_vpc.main, aws_instance.app -> aws_subnet.main, and aws_instance.app -> aws_iam_role_policy.policy. Two changes are needed. First, stop the instance from hardcoding its subnet id as a literal string; reference the subnet's id instead so the edge is produced by the expression itself. Second, add an aws_iam_role_policy resource that the instance must wait on even though it reads none of the policy's attributes; since no expression can record that, add it with depends_on. Do not add a depends_on for an edge a reference already creates.",
+        "grade": {
+          "fn": "grade_edges"
+        },
+        "starter": "resource \"aws_vpc\" \"main\" {\n  cidr_block = \"10.0.0.0/16\"\n}\n\nresource \"aws_subnet\" \"main\" {\n  vpc_id     = \"${aws_vpc.main.id}\"\n  cidr_block = \"10.0.1.0/24\"\n}\n\nresource \"aws_security_group\" \"sg\" {\n  vpc_id = \"${aws_vpc.main.id}\"\n}\n\nresource \"aws_instance\" \"app\" {\n  subnet_id = \"subnet-0123456789abcdef0\"\n}\n",
+        "solution": "resource \"aws_vpc\" \"main\" {\n  cidr_block = \"10.0.0.0/16\"\n}\n\nresource \"aws_subnet\" \"main\" {\n  vpc_id     = \"${aws_vpc.main.id}\"\n  cidr_block = \"10.0.1.0/24\"\n}\n\nresource \"aws_security_group\" \"sg\" {\n  vpc_id = \"${aws_vpc.main.id}\"\n}\n\nresource \"aws_iam_role_policy\" \"policy\" {\n  role   = \"app-role\"\n  policy = \"{ \\\"Version\\\": \\\"2012-10-17\\\" }\"\n}\n\nresource \"aws_instance\" \"app\" {\n  subnet_id  = \"${aws_subnet.main.id}\"\n  depends_on = [\"aws_iam_role_policy.policy\"]\n}\n",
+        "hints": [
+          "aws_instance.app still has subnet_id = \"subnet-0123456789abcdef0\", a plain string. The parser only sees a reference inside ${...}, so replace the literal with ${aws_subnet.main.id}.",
+          "The instance needs to wait for the IAM role policy but reads nothing from it, so no expression can carry that requirement. Add resource \"aws_iam_role_policy\" \"policy\" { ... } and put depends_on = [\"aws_iam_role_policy.policy\"] inside aws_instance.app.",
+          "If you also write depends_on = [\"aws_subnet.main\"] alongside the ${aws_subnet.main.id} reference, the grader rejects it: that edge already exists from the expression, and the depends_on adds nothing.",
+          "A single one-way reference never creates a cycle; you need a loop. Try adding a line like tag = \"${aws_instance.app.id}\" inside aws_vpc.main: now vpc -> instance -> subnet -> vpc closes, and the grader prints that path back to you. A resource graph has to stay a DAG; that's not a special case, it's what makes 'what runs before what' well defined at all."
+        ]
+      }
+    },
+    {
+      "id": "walk-not-write-order",
+      "title": "Why apply order is not your file order",
+      "prose": "The plan told you what would change. Apply now has to decide *when* each change happens, and it does that by walking a directed graph built from the references between resources, not by reading your file from top to bottom.\n\nFix one small graph: a `vpc`, two subnets and a security group that all reference the vpc's id, three instances that each reference a subnet, two of them referencing the security group as well, and a lone `s3_bucket` that references nothing and is referenced by nothing. Move any of these blocks anywhere in the file and the graph does not change, because the graph is built from expressions like `subnet_a.vpc_id = vpc.id`, not from block position.\n\nUse the controls below to change how long each resource takes to apply and how many resources can run at once, then shuffle the file listing and watch it separately from the timeline. The timeline never reacts to the shuffle. What it does react to is the graph's shape: `s3_bucket` has no edges, so it can start the instant capacity allows, no matter where it sits in the file, and the total time can only shrink until concurrency reaches the widest level of the graph, three nodes here, after which more concurrency buys nothing because the critical path is fixed by the edges.",
+      "widget": {
+        "type": "param-playground",
+        "title": "The graph decides the order, not the file",
+        "params": [
+          {
+            "id": "concurrency",
+            "label": "Concurrency (this model's setting)",
+            "kind": "range",
+            "min": 1,
+            "max": 8,
+            "step": 1,
+            "default": 2,
+            "format": "d",
+            "unit": ""
+          },
+          {
+            "id": "duration_profile",
+            "label": "Per-resource durations",
+            "kind": "choice",
+            "default": "uniform",
+            "options": [
+              {
+                "value": "uniform",
+                "label": "uniform: every resource takes 3s"
+              },
+              {
+                "value": "vpc_slow",
+                "label": "vpc slow: vpc takes 20s, everything else 3s"
+              },
+              {
+                "value": "instances_slow",
+                "label": "instances slow: each instance takes 15s, everything else 3s"
+              }
+            ]
+          },
+          {
+            "id": "shuffle_seed",
+            "label": "Shuffle the file listing (graph is unaffected)",
+            "kind": "range",
+            "min": 0,
+            "max": 4,
+            "step": 1,
+            "default": 0,
+            "format": "d",
+            "unit": ""
+          }
+        ],
+        "view": {
+          "fn": "apply_timeline_view",
+          "args": {
+            "concurrency": {
+              "param": "concurrency"
+            },
+            "duration_profile": {
+              "param": "duration_profile"
+            },
+            "shuffle_seed": {
+              "param": "shuffle_seed"
+            }
+          }
+        },
+        "readouts": [
+          {
+            "label": "Total apply time (this model)",
+            "fn": "total_apply_time",
+            "format": ".1f",
+            "unit": "s",
+            "args": {
+              "concurrency": {
+                "param": "concurrency"
+              },
+              "duration_profile": {
+                "param": "duration_profile"
+              }
+            }
+          },
+          {
+            "label": "Critical path length",
+            "fn": "critical_path_time",
+            "format": ".1f",
+            "unit": "s",
+            "args": {
+              "duration_profile": {
+                "param": "duration_profile"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "backwards-for-destroy",
+      "title": "Running the graph backwards",
+      "prose": "Destroy and replace ordering are not a new set of rules. They are the same nine-node graph you built from references in the previous module, walked backwards. Every edge that says \"this resource reads an attribute of that one\" still has to be honoured in reverse: a resource can never be torn down while something still depends on it.\n\nWalking the whole graph backwards for a full `terraform destroy`, the order is: load_balancer, instance_3, instance_2, eip, instance_1, subnet, security_group, route_table, vpc. Leaves go first, the three instances and the eip clear out before subnet and security_group, and vpc, the node everything else in the graph ultimately traces back to, goes last of all nine.\n\nA replace is a smaller version of the same walk, and where it starts decides how big the walk is. Mark instance_3 as force-new and its downstream reachable set is one resource, load_balancer, so two resources move in total. Mark vpc as force-new instead and the downstream reachable set is every other resource in the graph, eight of them. Terraform cannot destroy vpc while anything still references it, so all eight have to be dealt with first, in the same reverse order a full destroy would use, before vpc itself goes, and then everything rebuilds on top of the new vpc. A one-line attribute change on the root resource turns into work on the whole stack. (This model stops at destroy ordering. Whether Terraform tears down the old vpc before or after creating its replacement is a separate setting, `create_before_destroy`, and it is out of scope here.)\n\nStep through the vpc replace below. Watch the counter: it is the blast radius as a number, not a feeling.\n\nAcross this graph, vpc is the most dangerous single node to change: it has the largest downstream reachable set of any resource, eight nodes, against instance_3's one. That is not because vpc is a \"big\" resource type. It is because of where it sits, at the root of the dependency graph. A resource with the same kind of attribute sitting at a leaf, like load_balancer, can be replaced without touching anything else at all.",
+      "widget": {
+        "type": "step-sim",
+        "title": "Replacing vpc: running the graph backwards",
+        "max_steps": 9,
+        "autoplay_ms": 900,
+        "init": {
+          "fn": "backwards_destroy_init",
+          "args": {
+            "mode": {
+              "const": "replace_vpc"
+            }
+          }
+        },
+        "step": {
+          "fn": "backwards_destroy_step",
+          "args": {
+            "state": {
+              "state": true
+            }
+          }
+        },
+        "view": {
+          "fn": "backwards_destroy_view",
+          "args": {
+            "state": {
+              "state": true
+            }
+          }
+        }
+      }
+    }
+  ]
+}

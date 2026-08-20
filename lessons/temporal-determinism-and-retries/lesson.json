@@ -1,0 +1,304 @@
+{
+  "schema_version": 1,
+  "slug": "temporal-determinism-and-retries",
+  "title": "Replay-Safe Temporal Workflows",
+  "subtitle": "Predict how a Temporal workflow behaves on replay, and read a retry policy well enough to know exactly when the last attempt fires.",
+  "model": "model.py",
+  "packages": [],
+  "objectives": [
+    "Explain replay as command-versus-history matching, not as running the code again from scratch",
+    "Identify which operations inside workflow code are non-deterministic and name the deterministic SDK replacement for each",
+    "Distinguish a code change that is replay-safe from one that produces a non-determinism error, and apply patching to the unsafe case",
+    "Compute an exact retry schedule from initialInterval, backoffCoefficient, maximumInterval and maximumAttempts",
+    "Predict which of startToClose, scheduleToClose and maximumAttempts actually terminates a failing activity first"
+  ],
+  "misconceptions": [
+    {
+      "claim": "Determinism means the workflow must not touch anything random or time-based.",
+      "reality": "It means the sequence of commands the code emits must be reproducible from history. Randomness and time are fine when they come from the SDK, because their results are recorded as events and replayed identically."
+    },
+    {
+      "claim": "Replay re-executes activities, so replay is expensive and side effects happen twice.",
+      "reality": "Replay re-executes only workflow code. When the code reaches an activity call, the SDK serves the recorded result from history instead of scheduling anything. Side effects happen once."
+    },
+    {
+      "claim": "Any edit to a running workflow's code breaks it.",
+      "reality": "Only edits that change the command sequence for already-recorded history break it. Renaming variables, changing logging, editing activity bodies and adding code after the current progress point are all safe."
+    },
+    {
+      "claim": "maximumAttempts is what stops a retrying activity.",
+      "reality": "Whichever bound is hit first stops it. A scheduleToClose timeout routinely cuts a retry sequence off mid-backoff, long before the attempt count is exhausted, and an unset maximumAttempts means unlimited."
+    },
+    {
+      "claim": "The retry interval is the gap between the start of one attempt and the start of the next.",
+      "reality": "The interval is measured after the previous attempt fails, so real elapsed time is attempt duration plus interval. With a 10s startToClose and a 1s interval, attempts land roughly 11s apart, not 1s apart."
+    }
+  ],
+  "modules": [
+    {
+      "id": "what-replay-actually-does",
+      "title": "What Replay Actually Does",
+      "prose": "Replay is not Temporal running your workflow function again from scratch as if nothing had happened. It is the SDK re-executing your code while quietly feeding it answers from a log of events the server already recorded, the *event history*. At every `await` on an activity or timer, the worker checks: is there already a matching event in history? If yes, it hands back the recorded result and moves on without doing anything in the real world. Only once the history runs out does the worker start emitting genuinely new commands.\n\nThis is why a worker crash is a non-event for correctness. A brand new worker process, with zero memory of anything, can pick up the task, replay the whole history from line one, and land in exactly the same place the crashed worker was in, without re-charging a card or re-sending an email. Step through the simulation below and watch the `is_replaying` flag: it is `True` while the worker is catching up to recorded history, and flips to `False` the instant it starts producing new commands.\n\nWatch closely at the crash: `charge_card` is called exactly once across the whole run, even though the workflow function's `charge = await charge_card(order)` line executes on three separate occasions (once live, twice during replay by two different workers).",
+      "widget": {
+        "type": "step-sim",
+        "title": "Replay: Same Code, Two Different Workers, One History",
+        "max_steps": 9,
+        "autoplay_ms": 1200,
+        "init": {
+          "fn": "replay_sim_init",
+          "args": {}
+        },
+        "step": {
+          "fn": "replay_sim_step",
+          "args": {
+            "state": {
+              "state": true
+            }
+          }
+        },
+        "view": {
+          "fn": "replay_sim_view",
+          "args": {
+            "state": {
+              "state": true
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "which-line-breaks-replay",
+      "title": "Which Line Breaks Replay",
+      "prose": "A workflow is deterministic if it emits the same sequence of commands (schedule this activity, start this timer, wait on this signal) every time its code runs against the same history. Replay is not \"run the code again from scratch\": it's the SDK re-executing your workflow function and checking each command it emits against what's already recorded. Activities are never re-scheduled on replay; their results are just served back from history the instant the code reaches that call.\n\nThat means the line that breaks replay isn't the one that \"feels\" impure, it's the one whose result never gets written to history in the first place. `random.randint` reseeds itself; `datetime.now()` reads the real clock; both produce a different value on replay than they did originally, and the command sequence downstream diverges. The SDK's `workflow.random()`, `workflow.now()`, and `workflow.uuid4()` exist specifically to fix this: they record their draw as a marker event the first time, and replay just reads that marker back.\n\nBelow are six one-line snippets pulled from workflow code. Tag each one SAFE or UNSAFE in your head, then pick the option that matches your tags. One of the six is a genuine trap either way you guess.",
+      "widget": {
+        "type": "predict-reveal",
+        "title": "Which Line Breaks Replay",
+        "question": "Six lines of workflow code are shown below, each doing something that might plausibly break replay.\n\n1. `random.randint(1, 100)`\n2. `workflow.random().randint(1, 100)`\n3. `datetime.now()`\n4. `workflow.now()`\n5. `for k in some_dict: await act(k)`  (some_dict is a plain dict built earlier in the same workflow run)\n6. `requests.get(url)`  (called directly inside workflow code)\n\nExactly one of the four choices below correctly separates the three lines that cause a NonDeterminismError from the three that are safe as written. Which one?",
+        "options": [
+          {
+            "id": "a",
+            "text": "Unsafe: 1, 3, 6. Safe: 2, 4, 5.",
+            "predicate": "result == [True, False, True, False, False, True]"
+          },
+          {
+            "id": "b",
+            "text": "Unsafe: 1, 3, 5, 6. Safe: 2, 4.",
+            "predicate": "result == [True, False, True, False, True, True]"
+          },
+          {
+            "id": "c",
+            "text": "Unsafe: 1, 2, 3, 4, 6. Safe: 5.",
+            "predicate": "result == [True, True, True, True, False, True]"
+          },
+          {
+            "id": "d",
+            "text": "Unsafe: 1, 3. Safe: 2, 4, 5, 6.",
+            "predicate": "result == [True, False, True, False, False, False]"
+          }
+        ],
+        "check": {
+          "fn": "classify_unsafe_lines",
+          "args": {}
+        },
+        "view": {
+          "fn": "workflow_lines_view",
+          "args": {}
+        },
+        "explanation": "Line 1, `random.randint`, reseeds the stdlib generator on every process start, so replay draws a different number and the workflow's downstream commands diverge: unsafe. Line 2 swaps in `workflow.random()`, whose draw is written to history as a marker event the first time it runs; replay just reads that marker back: safe. Line 3, `datetime.now()`, reads the real wall clock, which is never the same value twice: unsafe. Line 4, `workflow.now()`, reads the time recorded in workflow history instead of the OS clock: safe. Line 5 is the trap: it looks non-deterministic because dict order feels arbitrary, but Python 3.7+ guarantees dicts iterate in insertion order, and that order was fixed when the dict was built earlier in the same deterministic run, so every replay walks it identically: safe. Line 6 calls out to the network directly from workflow code. The response is never recorded as a history event, so replay has nothing to play back, and the blocking call also stalls the workflow task; the fix is to move the call into an activity: unsafe. When one of these slips through, the failure doesn't show up at the original run. It shows up as a NonDeterminismError the next time that workflow replays, which can be days later, on a worker that never saw the first execution."
+      }
+    },
+    {
+      "id": "reading-a-retry-schedule",
+      "title": "Reading a Retry Schedule",
+      "prose": "A retry policy has four numbers, and once you fix them the whole schedule is determined: no randomness, no guessing. `initialInterval` sets the first wait, `backoffCoefficient` multiplies it each time, `maximumInterval` puts a ceiling on that growth, and `maximumAttempts` caps the count (0 means unlimited). The interval is measured *after* an attempt fails, so real elapsed time is attempt duration plus every interval before it, not the interval alone.\n\nPlay with the sliders and watch two things. First, exponential growth stops the moment `initialInterval * backoffCoefficient^k` exceeds `maximumInterval`; every attempt after that waits exactly the ceiling, however many attempts are left. Second, wall-clock time creeps up fast once attempts themselves take time: five attempts at 3 seconds each with the SDK defaults spans about 27 seconds, not 15.\n\nThe presets show the range in practice. A fast idempotent call clips its backoff almost immediately and burns through 10 attempts quickly. A slow external API with `scheduleToClose`-style limits often runs out of attempts long before backoff would have flattened. Linear backoff, `backoffCoefficient = 1.0`, is the one case where every interval is identical from the second attempt on.",
+      "widget": {
+        "type": "param-playground",
+        "title": "Retry Schedule Explorer",
+        "params": [
+          {
+            "id": "initial_interval",
+            "label": "Initial interval",
+            "kind": "range",
+            "min": 0.1,
+            "max": 60,
+            "step": 0.1,
+            "default": 1,
+            "format": ".2f",
+            "unit": "s"
+          },
+          {
+            "id": "backoff_coefficient",
+            "label": "Backoff coefficient",
+            "kind": "range",
+            "min": 1.0,
+            "max": 4.0,
+            "step": 0.05,
+            "default": 2.0,
+            "format": ".2f",
+            "unit": ""
+          },
+          {
+            "id": "maximum_interval",
+            "label": "Maximum interval",
+            "kind": "range",
+            "min": 1,
+            "max": 600,
+            "step": 1,
+            "default": 100,
+            "format": ".0f",
+            "unit": "s"
+          },
+          {
+            "id": "maximum_attempts",
+            "label": "Maximum attempts (0 = unlimited)",
+            "kind": "range",
+            "min": 0,
+            "max": 20,
+            "step": 1,
+            "default": 5,
+            "format": ".0f",
+            "unit": ""
+          },
+          {
+            "id": "attempt_duration",
+            "label": "Attempt duration before it fails",
+            "kind": "range",
+            "min": 0,
+            "max": 30,
+            "step": 0.5,
+            "default": 3,
+            "format": ".1f",
+            "unit": "s"
+          },
+          {
+            "id": "preset",
+            "label": "Preset",
+            "kind": "choice",
+            "default": "custom",
+            "options": [
+              {
+                "value": "custom",
+                "label": "custom (use sliders)"
+              },
+              {
+                "value": "sdk_default",
+                "label": "SDK default: 1s, 2.0x, 100s cap, unlimited"
+              },
+              {
+                "value": "fast_idempotent",
+                "label": "Fast idempotent call: 0.1s, 2.0x, 5s cap, 10 attempts"
+              },
+              {
+                "value": "slow_external",
+                "label": "Slow external API: 5s, 2.0x, 300s cap, 8 attempts"
+              },
+              {
+                "value": "linear",
+                "label": "Linear: 10s, 1.0x, 100s cap, 5 attempts"
+              }
+            ]
+          }
+        ],
+        "view": {
+          "fn": "retry_stack_view",
+          "args": {
+            "preset": {
+              "param": "preset"
+            },
+            "initial_interval": {
+              "param": "initial_interval"
+            },
+            "backoff_coefficient": {
+              "param": "backoff_coefficient"
+            },
+            "maximum_interval": {
+              "param": "maximum_interval"
+            },
+            "maximum_attempts": {
+              "param": "maximum_attempts"
+            },
+            "attempt_duration": {
+              "param": "attempt_duration"
+            }
+          }
+        },
+        "readouts": [
+          {
+            "label": "Time the last shown attempt starts",
+            "fn": "total_elapsed_readout",
+            "format": ".1f",
+            "unit": "s",
+            "args": {
+              "preset": {
+                "param": "preset"
+              },
+              "initial_interval": {
+                "param": "initial_interval"
+              },
+              "backoff_coefficient": {
+                "param": "backoff_coefficient"
+              },
+              "maximum_interval": {
+                "param": "maximum_interval"
+              },
+              "maximum_attempts": {
+                "param": "maximum_attempts"
+              },
+              "attempt_duration": {
+                "param": "attempt_duration"
+              }
+            }
+          },
+          {
+            "label": "First attempt clamped to maximumInterval",
+            "fn": "capped_at_attempt_readout",
+            "format": ".0f",
+            "unit": "",
+            "args": {
+              "preset": {
+                "param": "preset"
+              },
+              "initial_interval": {
+                "param": "initial_interval"
+              },
+              "backoff_coefficient": {
+                "param": "backoff_coefficient"
+              },
+              "maximum_interval": {
+                "param": "maximum_interval"
+              },
+              "maximum_attempts": {
+                "param": "maximum_attempts"
+              },
+              "attempt_duration": {
+                "param": "attempt_duration"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "write-a-replay-safe-workflow",
+      "title": "Make This Workflow Replay-Safe",
+      "prose": "A Temporal workflow is only replay-safe if every command it emits (start an activity, start a timer, ask the clock, generate an id) is *deterministic*: given the same history, the code must emit the same commands in the same order every time it runs. It doesn't need to avoid time, randomness or identity generation, it just needs to get them from the SDK instead of the standard library, because the SDK's versions are recorded in history and replayed from there instead of recomputed.\n\nBelow is a workflow function with four defects that are all variations on the same mistake: reaching past the SDK into `uuid`, `datetime` or `time` directly. Each one means a fresh worker process replaying this workflow from its recorded history could compute a different idempotency key, walk down the wrong branch, or block the thread on a sleep that isn't even a recorded event. There is a fifth, different kind of defect too: the activity call has no `start_to_close` timeout and no retry policy, so a stuck activity underneath it has nothing bounding how long, or how many times, it gets retried.\n\nRewrite `book_hotel_workflow` using the `workflow.*` shims already in the cell: `workflow.uuid4()`, `workflow.now()`, `workflow.sleep()`, and pass `start_to_close` and a `RetryPolicy(maximum_attempts=...)` into `workflow.execute_activity(...)`. Leave the shim classes and `confirm_booking` alone, they're the harness, not the exercise.",
+      "widget": {
+        "type": "code-cell",
+        "title": "Make This Workflow Replay-Safe",
+        "language": "python",
+        "task": "Fix `book_hotel_workflow` so that (1) it never touches `uuid`, `datetime.now()` or `time.sleep()` directly, using the `workflow.*` equivalents instead, and (2) its `execute_activity` call carries a `start_to_close` timeout and a `RetryPolicy` with `maximum_attempts` set. Do not change `_FakeWorkflow`, `RetryPolicy`, `confirm_booking` or the `workflow` instance.",
+        "starter": "import time\nimport uuid\nfrom datetime import datetime\nfrom dataclasses import dataclass\nfrom typing import Optional\n\n\n@dataclass\nclass RetryPolicy:\n    initial_interval: float = 1.0\n    backoff_coefficient: float = 2.0\n    maximum_interval: Optional[float] = None\n    maximum_attempts: int = 0\n\n\nclass _FakeWorkflow:\n    \"\"\"Deterministic stand-ins for wall-clock time, randomness and identity\n    inside a workflow. A real SDK records the first result in history and\n    serves that same result back on every replay, so calling these twice\n    against the same history has to give the same answer both times.\"\"\"\n\n    def __init__(self, fixed_uuid=\"1111-aaaa-bbbb\", fixed_now=None, fixed_random=0.42):\n        self._fixed_uuid = fixed_uuid\n        self._fixed_now = fixed_now if fixed_now is not None else datetime(2024, 1, 1, 10, 0, 0)\n        self._fixed_random = fixed_random\n        self.log = []\n\n    def uuid4(self):\n        self.log.append({\"op\": \"uuid4\", \"value\": self._fixed_uuid})\n        return self._fixed_uuid\n\n    def now(self):\n        self.log.append({\"op\": \"now\", \"value\": self._fixed_now.isoformat()})\n        return self._fixed_now\n\n    def random(self):\n        self.log.append({\"op\": \"random\", \"value\": self._fixed_random})\n        return self._fixed_random\n\n    def sleep(self, seconds):\n        self.log.append({\"op\": \"sleep\", \"seconds\": seconds})\n\n    def execute_activity(self, fn, arg, start_to_close=None, retry_policy=None):\n        self.log.append({\n            \"op\": \"execute_activity\",\n            \"activity\": getattr(fn, \"__name__\", str(fn)),\n            \"arg\": arg,\n            \"start_to_close\": start_to_close,\n            \"maximum_attempts\": retry_policy.maximum_attempts if retry_policy else None,\n        })\n        return {\"status\": \"confirmed\", \"arg\": arg}\n\n\ndef confirm_booking(details):\n    \"\"\"The activity being called. This part is already correct, leave it alone.\"\"\"\n    return {\"confirmed\": True, \"hotel\": details.get(\"hotel\")}\n\n\nworkflow = _FakeWorkflow()\n\n\ndef book_hotel_workflow(request):\n    # BUG 1: a fresh real id is different on every call, so replay would\n    # recompute a different idempotency key than the one already in history.\n    idem_key = str(uuid.uuid4())\n\n    # BUG 2: wall-clock time differs run to run, so this branch can take a\n    # different path on replay than the one history says it took.\n    if datetime.now().hour < 9:\n        rate_plan = \"early_bird\"\n    else:\n        rate_plan = \"standard\"\n\n    # BUG 3: a real sleep blocks the worker and is not a recorded event.\n    time.sleep(0.05)\n\n    # BUG 4: no start_to_close timeout and no retry policy, so a stuck\n    # activity has nothing bounding how long or how many times it retries.\n    result = workflow.execute_activity(\n        confirm_booking,\n        {\"hotel\": request[\"hotel\"], \"idem_key\": idem_key, \"rate_plan\": rate_plan},\n    )\n    return result\n",
+        "solution": "import time\nimport uuid\nfrom datetime import datetime\nfrom dataclasses import dataclass\nfrom typing import Optional\n\n\n@dataclass\nclass RetryPolicy:\n    initial_interval: float = 1.0\n    backoff_coefficient: float = 2.0\n    maximum_interval: Optional[float] = None\n    maximum_attempts: int = 0\n\n\nclass _FakeWorkflow:\n    \"\"\"Deterministic stand-ins for wall-clock time, randomness and identity\n    inside a workflow. A real SDK records the first result in history and\n    serves that same result back on every replay, so calling these twice\n    against the same history has to give the same answer both times.\"\"\"\n\n    def __init__(self, fixed_uuid=\"1111-aaaa-bbbb\", fixed_now=None, fixed_random=0.42):\n        self._fixed_uuid = fixed_uuid\n        self._fixed_now = fixed_now if fixed_now is not None else datetime(2024, 1, 1, 10, 0, 0)\n        self._fixed_random = fixed_random\n        self.log = []\n\n    def uuid4(self):\n        self.log.append({\"op\": \"uuid4\", \"value\": self._fixed_uuid})\n        return self._fixed_uuid\n\n    def now(self):\n        self.log.append({\"op\": \"now\", \"value\": self._fixed_now.isoformat()})\n        return self._fixed_now\n\n    def random(self):\n        self.log.append({\"op\": \"random\", \"value\": self._fixed_random})\n        return self._fixed_random\n\n    def sleep(self, seconds):\n        self.log.append({\"op\": \"sleep\", \"seconds\": seconds})\n\n    def execute_activity(self, fn, arg, start_to_close=None, retry_policy=None):\n        self.log.append({\n            \"op\": \"execute_activity\",\n            \"activity\": getattr(fn, \"__name__\", str(fn)),\n            \"arg\": arg,\n            \"start_to_close\": start_to_close,\n            \"maximum_attempts\": retry_policy.maximum_attempts if retry_policy else None,\n        })\n        return {\"status\": \"confirmed\", \"arg\": arg}\n\n\ndef confirm_booking(details):\n    \"\"\"The activity being called. This part is already correct, leave it alone.\"\"\"\n    return {\"confirmed\": True, \"hotel\": details.get(\"hotel\")}\n\n\nworkflow = _FakeWorkflow()\n\n\ndef book_hotel_workflow(request):\n    idem_key = str(workflow.uuid4())\n\n    if workflow.now().hour < 9:\n        rate_plan = \"early_bird\"\n    else:\n        rate_plan = \"standard\"\n\n    workflow.sleep(0.05)\n\n    result = workflow.execute_activity(\n        confirm_booking,\n        {\"hotel\": request[\"hotel\"], \"idem_key\": idem_key, \"rate_plan\": rate_plan},\n        start_to_close=10,\n        retry_policy=RetryPolicy(\n            initial_interval=1,\n            backoff_coefficient=2,\n            maximum_interval=30,\n            maximum_attempts=5,\n        ),\n    )\n    return result\n",
+        "tests": "class _BannedModule:\n    \"\"\"Stands in for a banned standard-library module. Any attribute access or\n    call raises with the message naming the replacement.\"\"\"\n\n    def __init__(self, message):\n        self._message = message\n\n    def __getattr__(self, name):\n        raise AssertionError(self._message)\n\n    def __call__(self, *args, **kwargs):\n        raise AssertionError(self._message)\n\n\nuuid = _BannedModule(\n    \"book_hotel_workflow called uuid.uuid4() directly: a fresh id on every run \"\n    \"means replay computes a different idempotency key than the one already in \"\n    \"history, use workflow.uuid4() instead\"\n)\ndatetime = _BannedModule(\n    \"book_hotel_workflow read the wall clock through datetime directly: the \"\n    \"branch can take a different path on replay, use workflow.now() instead\"\n)\ntime = _BannedModule(\n    \"book_hotel_workflow called time.sleep() directly: a real sleep blocks the \"\n    \"worker and is not a recorded event, use workflow.sleep(seconds) instead\"\n)\nrandom = _BannedModule(\n    \"book_hotel_workflow used random directly: the value would be recomputed on \"\n    \"replay, use workflow.random() instead\"\n)\n\nrequest = {\"hotel\": \"riverside-inn\"}\n\nworkflow.log = []\nresult_1 = book_hotel_workflow(request)\nlog_1 = list(workflow.log)\n\nworkflow.log = []\nresult_2 = book_hotel_workflow(request)\nlog_2 = list(workflow.log)\n\naudit_1 = audit_command_log(log_1)\naudit_2 = audit_command_log(log_2)\n\nassert audit_1[\"op_sequence\"] == audit_2[\"op_sequence\"], (\n    f\"run 1 emitted commands {audit_1['op_sequence']} but run 2 emitted \"\n    f\"{audit_2['op_sequence']}: the same recorded history must produce the \"\n    f\"same sequence of commands on replay\"\n)\n\nassert log_1 == log_2, (\n    f\"run 1 emitted {log_1} but run 2 emitted {log_2}: every recorded command \"\n    f\"must carry the same values on replay\"\n)\n\nassert audit_1[\"idem_key\"] == audit_2[\"idem_key\"], (\n    f\"run 1 emitted idem_key={audit_1['idem_key']} but run 2 emitted \"\n    f\"idem_key={audit_2['idem_key']}: the key must come from workflow.uuid4()\"\n)\n\nassert \"uuid4\" in audit_1[\"op_sequence\"], (\n    \"no uuid4 command was recorded: the idempotency key must come from \"\n    \"workflow.uuid4() so it lands in history\"\n)\n\nassert \"now\" in audit_1[\"op_sequence\"], (\n    \"no now command was recorded: the rate-plan branch must read the clock \"\n    \"through workflow.now()\"\n)\n\nassert \"sleep\" in audit_1[\"op_sequence\"], (\n    \"no sleep command was recorded: the delay must go through \"\n    \"workflow.sleep(seconds) so it becomes a recorded timer\"\n)\n\nassert audit_1[\"has_activity\"], \"book_hotel_workflow never called workflow.execute_activity\"\n\nassert audit_1[\"has_timeout\"], (\n    \"the activity call has no start_to_close timeout: a stuck activity would \"\n    \"retry forever with nothing to cut it off\"\n)\n\nassert audit_1[\"has_bounded_retries\"], (\n    f\"maximum_attempts={audit_1['maximum_attempts']}: pass a RetryPolicy with \"\n    f\"maximum_attempts set so the retries are bounded\"\n)\n\nassert result_1 == result_2, (\n    f\"run 1 returned {result_1} but run 2 returned {result_2}: the workflow \"\n    f\"result must be identical across replays\"\n)\n",
+        "hints": [
+          "Swap the standard-library calls for the SDK shims: `uuid.uuid4()` becomes `workflow.uuid4()`, `datetime.now()` becomes `workflow.now()`, `time.sleep(...)` becomes `workflow.sleep(...)`. Nothing about what the code computes changes, only where the value comes from.",
+          "The `execute_activity` call needs two more keyword arguments: `start_to_close=<seconds>` and `retry_policy=RetryPolicy(maximum_attempts=<n>, ...)`. Without a timeout, a stuck activity has nothing bounding how long it runs or how many times it gets retried.",
+          "Leave `_FakeWorkflow`, `RetryPolicy`, `confirm_booking` and the module-level `workflow = _FakeWorkflow()` exactly as given. Only `book_hotel_workflow`'s body should change.",
+          "Run the function in your head against the same recorded history twice: if any line can produce a different value the second time, that line is the bug."
+        ]
+      }
+    }
+  ],
+  "targets": "Temporal Server 1.2x with the Python SDK (temporalio 1.x); command/event semantics are stable across recent versions",
+  "generated_on": "2026-08-19"
+}
